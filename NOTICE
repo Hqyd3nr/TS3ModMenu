@@ -1,0 +1,31 @@
+Toy Story 3 Mod Menu
+Copyright (C) 2026 Hqyd3nr (https://github.com/Hqyd3nr/TS3ModMenu)
+
+Licensed under the GNU General Public License v3.0 (see LICENSE).
+
+This project is an unofficial fan-made mod. It is not affiliated with, endorsed by or sponsored by
+Disney, Pixar, Avalanche Software or any other developer or publisher of Toy Story 3.
+
+GAME MATERIAL
+Toy Story 3 characters, names and game artwork are the property of Disney/Pixar and Avalanche Software.
+Menu icons and portraits in assets/menu and assets/world-signs are derived from game artwork and are
+included only so the mod can display them; they are not covered by this project's license.
+No game executables or game data files are included in this repository.
+
+THIRD-PARTY COMPONENTS
+Fonts (assets/menu)
+  Lilita One - Copyright (c) 2011 Juan Montoreano, with Reserved Font Name "Lilita One".
+  Nunito - Copyright 2014 The Nunito Project Authors (https://github.com/googlefonts/nunito).
+  Both are licensed under the SIL Open Font License, Version 1.1. See assets/menu/OFL-LilitaOne.txt
+  and assets/menu/OFL-Nunito.txt.
+
+Compatibility SDK headers (vendor/reshade*.hpp, vendor/addon_manager-reference.hpp,
+vendor/runtime_gui-reference.cpp)
+  Copyright 2014 Patrick Mours. Licensed under the BSD 3-Clause License. See vendor/RESHADE-LICENSE.md.
+  Release ZIPs include these terms as Mod Menu/licenses/Compatibility-SDK-license.txt.
+
+Dear ImGui headers (vendor/imgui.h, vendor/imconfig.h)
+  Copyright (c) 2014-2025 Omar Cornut. Licensed under the MIT License. See vendor/IMGUI-LICENSE.txt.
+
+INSPIRATION
+The interface and typography are inspired by the Toy Story 3 Companion app.
