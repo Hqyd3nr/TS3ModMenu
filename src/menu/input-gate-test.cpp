@@ -66,6 +66,10 @@ extern "C" void TestEntry(){
  Renew(false);Check(PadState(0,&output)==0&&output.lx==21000&&output.buttons==0&&output.rightTrigger==0);
  pad.buttons=0;pad.rightTrigger=0;Check(PadState(0,&output)==0&&output.lx==21000&&!padRelease[0]);
  pad.buttons=0x1000;Check(PadState(0,&output)==0&&output.buttons==0x1000&&output.lx==21000);
+ // While flying the game's copy loses A/B and the left stick; right stick (camera) and other buttons stay.
+ pad.buttons=0x1000|0x4000;pad.ly=-9000;pad.rx=5000;flightOwnsFaceButtons=true;
+ Check(PadState(0,&output)==0&&output.buttons==0x4000&&output.lx==0&&output.ly==0&&output.rx==5000);
+ flightOwnsFaceButtons=false;Check(PadState(0,&output)==0&&output.lx==21000&&output.ly==-9000);pad.buttons=0;pad.ly=pad.rx=0;
 
  MenuInputGate::lease=0;Renew(false);held=false;wasOpen=releaseKeys=0;
  Check(!Blocked());SetExternalMenu(true);Check(ExternalOpen()&&Blocked());

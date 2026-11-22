@@ -35,7 +35,7 @@ static bool prefsLoaded=false,dark=false,themeSeen=false;
 static ImVec2 themeOrigin;static bool themeOriginSet=false;
 static int theme=2; // 0 Light, 1 Dark, 2 System; System is the default.
 static DWORD themePoll=0;static bool systemDark=false;
-// Settings > Controls: key and controller button that open/close the menu (CheatMenu.ini).
+// Settings > Controls: key and controller button that open/close the menu (saved in the registry).
 // Keys/buttons used for movement, flight, the menu itself or Windows are refused so they never do two things.
 static int openKey=VK_TAB;static WORD openButton=0x0001;static bool captureHeld[256];static const char* captureNote;static DWORD captureNoteTick;
 // A and B select and go back in the menu; View opens missions and Menu pauses the game.
@@ -74,7 +74,7 @@ static void KeyName(int vk,char* out,int size){
  WCHAR name[48];int n=code?GetKeyNameTextW(LONG(code<<16),name,48):0;
  if(n<=0||!WideCharToMultiByte(CP_UTF8,0,name,-1,out,size,nullptr,nullptr))wsprintfA(out,"Key %d",vk);
 }
-static WCHAR prefsPath[MAX_PATH];
+static bool prefsStore=true; // false in self-tests: never touch the player's saved settings
 static uint32_t sequence=0,pending=0,pendingAction=0;
 static bool closeAfterPictomaticAdd=false;
 static int appliedSky=-1,requestedSky=-1;
@@ -611,7 +611,48 @@ static void NpcsPage(){
  char count[128];wsprintfA(count,Localization::Get("%u spawned NPCs"),state.spawnedNpcs);Text(526,675,count,Nunito18,muted);
  Text(240,710,"Clear removes only NPCs spawned through this menu.",Nunito18,muted,768);
 }
-static void SavePreferences(){if(prefsPath[0]){const WCHAR* value=theme==1?L"Dark":theme==2?L"System":L"Light";WritePrivateProfileStringW(L"Menu",L"Theme",value,prefsPath);WritePrivateProfileStringW(L"Menu",L"Language",Localization::codes[Localization::language],prefsPath);WCHAR number[16];wsprintfW(number,L"%d",openKey);WritePrivateProfileStringW(L"Menu",L"OpenKey",number,prefsPath);wsprintfW(number,L"%d",int(openButton));WritePrivateProfileStringW(L"Menu",L"OpenButton",number,prefsPath);}}
+// Settings live in the registry (HKCU\Software\TS3ModMenu); no settings file. advapi32 is loaded
+// at runtime like the System-theme check above.
+static const WCHAR prefsKey[]=L"Software\\TS3ModMenu";
+using RegGetFn=LSTATUS(WINAPI*)(HKEY,LPCWSTR,LPCWSTR,DWORD,LPDWORD,PVOID,LPDWORD);
+using RegSetFn=LSTATUS(WINAPI*)(HKEY,LPCWSTR,LPCWSTR,DWORD,LPCVOID,DWORD);
+static HMODULE Advapi(){static HMODULE m=LoadLibraryExW(L"advapi32.dll",nullptr,LOAD_LIBRARY_SEARCH_SYSTEM32);return m;}
+static RegGetFn RegGet(){static RegGetFn f=Advapi()?(RegGetFn)GetProcAddress(Advapi(),"RegGetValueW"):nullptr;return f;}
+static RegSetFn RegSet(){static RegSetFn f=Advapi()?(RegSetFn)GetProcAddress(Advapi(),"RegSetKeyValueW"):nullptr;return f;}
+static bool PrefText(const WCHAR* name,WCHAR* out,DWORD chars){RegGetFn f=RegGet();WCHAR value[32];DWORD bytes=sizeof(value);if(!f||f(HKEY_CURRENT_USER,prefsKey,name,RRF_RT_REG_SZ,nullptr,value,&bytes)!=ERROR_SUCCESS||lstrlenW(value)>=int(chars))return false;lstrcpyW(out,value);return true;}
+static bool PrefNumber(const WCHAR* name,DWORD& out){RegGetFn f=RegGet();DWORD value=0,bytes=sizeof(value);if(!f||f(HKEY_CURRENT_USER,prefsKey,name,RRF_RT_REG_DWORD,nullptr,&value,&bytes)!=ERROR_SUCCESS)return false;out=value;return true;}
+static bool SetPrefText(const WCHAR* name,const WCHAR* value){RegSetFn f=RegSet();return f&&f(HKEY_CURRENT_USER,prefsKey,name,REG_SZ,value,DWORD((lstrlenW(value)+1)*sizeof(WCHAR)))==ERROR_SUCCESS;}
+static bool SetPrefNumber(const WCHAR* name,DWORD value){RegSetFn f=RegSet();return f&&f(HKEY_CURRENT_USER,prefsKey,name,REG_DWORD,&value,sizeof(value))==ERROR_SUCCESS;}
+// A settings file only exists as a fallback, and only ever as ModMenu.ini (never CheatMenu.ini),
+// in %APPDATA%\Disney\Toy Story 3 Complete Edition next to the game's own save folder.
+static bool SettingsFile(WCHAR* path,const WCHAR* name){DWORD n=GetEnvironmentVariableW(L"APPDATA",path,MAX_PATH);if(!n||n>=MAX_PATH-90)return false;lstrcatW(path,L"\\Disney\\Toy Story 3 Complete Edition\\");lstrcatW(path,name);return true;}
+static bool FileExists(const WCHAR* path){return GetFileAttributesW(path)!=INVALID_FILE_ATTRIBUTES;}
+// Always written fresh: only theme, language and menu key/button, nothing left over from old versions.
+static void WriteSettingsFile(const WCHAR* path,const WCHAR* theme,const WCHAR* lang,int key,int button){
+ DeleteFileW(path);WCHAR number[16];
+ WritePrivateProfileStringW(L"Menu",L"Theme",theme,path);WritePrivateProfileStringW(L"Menu",L"Language",lang,path);
+ wsprintfW(number,L"%d",key);WritePrivateProfileStringW(L"Menu",L"OpenKey",number,path);wsprintfW(number,L"%d",button);WritePrivateProfileStringW(L"Menu",L"OpenButton",number,path);
+}
+static void SavePreferences(){if(!prefsStore)return;
+ const WCHAR* value=theme==1?L"Dark":theme==2?L"System":L"Light";const WCHAR* lang=Localization::codes[Localization::language];
+ bool saved=SetPrefText(L"Theme",value);saved=SetPrefText(L"Language",lang)&&saved;saved=SetPrefNumber(L"OpenKey",DWORD(openKey))&&saved;saved=SetPrefNumber(L"OpenButton",DWORD(openButton))&&saved;
+ WCHAR path[MAX_PATH];if(!SettingsFile(path,L"ModMenu.ini"))return;
+ if(saved){if(FileExists(path))DeleteFileW(path);return;}   // registry holds everything: no file
+ WriteSettingsFile(path,value,lang,openKey,openButton);     // registry unavailable: keep them in ModMenu.ini
+}
+// Versions up to 1.2.0 kept settings in CheatMenu.ini (older ones also left unused Clouds/Shading lines).
+// Only theme, language and menu key/button are carried over: into the registry, then the old file is
+// deleted (only after every value was written). If the registry can't be written, a fresh ModMenu.ini
+// with just those settings replaces CheatMenu.ini.
+static void MigrateSettingsFiles(){
+ WCHAR path[MAX_PATH],old[MAX_PATH];if(!SettingsFile(path,L"ModMenu.ini")||!SettingsFile(old,L"CheatMenu.ini"))return;
+ const WCHAR* from=FileExists(path)?path:FileExists(old)?old:nullptr;if(!from)return;   // ModMenu.ini is newer than any CheatMenu.ini
+ WCHAR value[16],lang[16];GetPrivateProfileStringW(L"Menu",L"Theme",L"System",value,16,from);GetPrivateProfileStringW(L"Menu",L"Language",L"en",lang,16,from);
+ UINT key=GetPrivateProfileIntW(L"Menu",L"OpenKey",VK_TAB,from),button=GetPrivateProfileIntW(L"Menu",L"OpenButton",1,from);
+ if(SetPrefText(L"Theme",value)&&SetPrefText(L"Language",lang)&&SetPrefNumber(L"OpenKey",key)&&SetPrefNumber(L"OpenButton",button))DeleteFileW(path);
+ else WriteSettingsFile(path,value,lang,int(key),int(button));
+ DeleteFileW(old);
+}
 static void SettingsDrawer(){
  if(settingsSlide<=0)return;
  drawingSettings=true;
@@ -747,9 +788,18 @@ static void Gear(float x,float y){
 void Opened(OverlayHost::Runtime*){capture=0;NativeUI::PadCapture(false);themeSeen=false;for(auto& m:motions)m={};pending=0;closeAfterPictomaticAdd=false;localMessage[0]=0;titleDragging=false;}
 void Closed(OverlayHost::Runtime*){titleDragging=false;capture=0;NativeUI::PadCapture(false);}
 static void LoadPreferences(){
- if(prefsLoaded)return;prefsLoaded=true;DWORD n=GetEnvironmentVariableW(L"APPDATA",prefsPath,MAX_PATH);if(n&&n<MAX_PATH-90){lstrcatW(prefsPath,L"\\Disney\\Toy Story 3 Complete Edition\\CheatMenu.ini");WCHAR value[16];GetPrivateProfileStringW(L"Menu",L"Theme",L"System",value,16,prefsPath);theme=lstrcmpiW(value,L"Dark")==0?1:lstrcmpiW(value,L"System")==0?2:0;}else prefsPath[0]=0;WCHAR lang[16];GetPrivateProfileStringW(L"Menu",L"Language",L"en",lang,16,prefsPath);for(int i=0;i<Localization::count;++i)if(lstrcmpiW(lang,Localization::codes[i])==0)Localization::language=i;
- if(prefsPath[0]){int key=int(GetPrivateProfileIntW(L"Menu",L"OpenKey",VK_TAB,prefsPath));openKey=key==VK_TAB||!KeyConflict(key)?key:VK_TAB;
-  int button=int(GetPrivateProfileIntW(L"Menu",L"OpenButton",1,prefsPath));openButton=button>0&&button<0x10000&&PadIndex(WORD(button))>=0?WORD(button):WORD(1);}
+ if(prefsLoaded)return;prefsLoaded=true;if(!prefsStore)return;
+ WCHAR value[16]=L"System",lang[16]=L"en";DWORD key=VK_TAB,button=1;
+ bool registry=PrefText(L"Theme",value,16);if(!registry){MigrateSettingsFiles();registry=PrefText(L"Theme",value,16);}
+ WCHAR path[MAX_PATH];
+ if(registry){PrefText(L"Language",lang,16);PrefNumber(L"OpenKey",key);PrefNumber(L"OpenButton",button);}
+ else if(SettingsFile(path,L"ModMenu.ini")&&FileExists(path)){   // fallback file when the registry can't be used
+  GetPrivateProfileStringW(L"Menu",L"Theme",L"System",value,16,path);GetPrivateProfileStringW(L"Menu",L"Language",L"en",lang,16,path);
+  key=GetPrivateProfileIntW(L"Menu",L"OpenKey",VK_TAB,path);button=GetPrivateProfileIntW(L"Menu",L"OpenButton",1,path);}
+ theme=lstrcmpiW(value,L"Dark")==0?1:lstrcmpiW(value,L"System")==0?2:0;
+ for(int i=0;i<Localization::count;++i)if(lstrcmpiW(lang,Localization::codes[i])==0)Localization::language=i;
+ openKey=key==VK_TAB||(key<256&&!KeyConflict(int(key)))?int(key):VK_TAB;
+ openButton=button>0&&button<0x10000&&PadIndex(WORD(button))>=0?WORD(button):WORD(1);
 }
 int OpenKey(){LoadPreferences();return openKey;}
 bool Typing(){return searchFocused&&page==3&&!settingsOpen&&!NativeUI::ControllerActive();}
@@ -985,7 +1035,7 @@ bool TestScrollEdges(){
  }
  ImGui::GetIO().MouseWheel=0;Localization::language=0;NativeUI::TestPointer(ImVec2(-1000,-1000),false,false);return true;
 }
-void TestLanguage(int value){Localization::language=value;prefsLoaded=true;prefsPath[0]=0;settingsScroll=0;languageOpen=false;}
+void TestLanguage(int value){Localization::language=value;prefsLoaded=true;prefsStore=false;settingsScroll=0;languageOpen=false;}
 void TestCreditsScroll(){settingsScroll=300;}
 void TestLanguageDropdown(){languageOpen=true;settingsScroll=0;}
 bool TestLocalization(){
@@ -994,7 +1044,7 @@ bool TestLocalization(){
    for(const unsigned char* p=(const unsigned char*)row[lang];*p;){unsigned c=Localization::Next(p);for(int f=0;f<5;++f)if(FindGlyph((FontIndex)f,c)->codepoint!=c)return false;}}
  }
  for(const char* name:Localization::names){for(const unsigned char* p=(const unsigned char*)name;*p;){unsigned c=Localization::Next(p);if(FindGlyph(Nunito18,c)->codepoint!=c)return false;}}
- Localization::language=0;settingsScroll=0;languageOpen=false;prefsPath[0]=0;
+ Localization::language=0;settingsScroll=0;languageOpen=false;prefsStore=false;
  settingsOpen=true;settingsSlide=1;
  NativeUI::TestPointer(P(720,210),true,false);SettingsDrawer();NativeUI::TestPointer(P(720,210),false,true);SettingsDrawer();if(!languageOpen)return false;
  NativeUI::TestPointer(P(720,292),true,false);SettingsDrawer();NativeUI::TestPointer(P(720,292),false,true);SettingsDrawer();if(languageOpen||Localization::language!=1)return false;

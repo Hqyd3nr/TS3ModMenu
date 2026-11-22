@@ -104,6 +104,7 @@ static void Frame(){
    ((void(*)(void*,int,void*))A(0x5f1030))(manager,index,avatar);
   }__finally{ZurgTransform::InPlace::Clear();}
   const bool changed=At<void*>(manager,0x1a0+index*0x58)==avatar;
+  if(changed)ZurgTransform::Retired::Add(c,source);   // keep the character you left without collision
   const char* done[3]={"Playing as Woody.","Playing as Buzz.","Playing as Jessie."};
   Message(changed?TS3CheatOk:TS3CheatFault,changed?done[target]:"The game could not switch characters.");
  }__except(EXCEPTION_EXECUTE_HANDLER){Message(TS3CheatFault,"Character switch stopped after a game-state change.");}

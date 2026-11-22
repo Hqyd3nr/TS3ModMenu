@@ -27,6 +27,7 @@ static void Capture(const wchar_t* path){
  void* data=nullptr;Require(SUCCEEDED(readback->Map(0,nullptr,&data)),"readback map failed");HANDLE file=CreateFileW(path,GENERIC_WRITE,0,0,CREATE_ALWAYS,FILE_ATTRIBUTE_NORMAL,0);Require(file!=INVALID_HANDLE_VALUE,"capture file failed");DWORD done;for(unsigned y=0;y<desc.Height;++y)WriteFile(file,(BYTE*)data+fp.Offset+y*fp.Footprint.RowPitch,DWORD(desc.Width*4),&done,0);CloseHandle(file);readback->Unmap(0,nullptr);readback->Release();
 }
 extern "C" void TestEntry(){
+ CheatMenuUI::TestLanguage(0); // first: settings storage off, so no test run reads, migrates or writes the player's real settings
  {const unsigned char edge[]={255,255,255,255,0,0,0,0,0,0,0,0,0,0,0,0};unsigned char reduced[4]={};
   IconMipmaps::Reduce(edge,2,2,8,reduced,1,1,4);
   Require(reduced[0]==255&&reduced[1]==255&&reduced[2]==255&&reduced[3]==64,"icon outline darkened during reduction");
@@ -70,7 +71,7 @@ extern "C" void TestEntry(){
   const char* message="Missing-assets notice: visible in five languages; input released; keyboard/mouse forwarded; timeout and dismissal passed.\r\n";
   DWORD done;WriteFile(GetStdHandle(STD_OUTPUT_HANDLE),message,lstrlenA(message),&done,0);ExitProcess(0);
  }
- // Never read or write the player's real CheatMenu.ini: start from default Light/English.
+ // Never read or write the player's real saved settings: start from default Light/English.
  CheatMenuUI::TestLanguage(0);CheatMenuUI::TestTheme(0);
  open=true;unsigned initialFlushes=testTextureFlushes;Draw();Require(rt.ready&&!rt.failed&&open,"first menu render failed");
  Require(testTextureFlushes-initialFlushes==2,"first open did not batch texture uploads into two fences");Require(textureUploadCount==0&&!textureBatch,"completed uploads retained staging resources");

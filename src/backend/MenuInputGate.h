@@ -155,7 +155,9 @@ static DWORD WINAPI PadState(DWORD index,Pad* state){
   state->buttons&=~padButtons[index];if(padLeft[index])state->leftTrigger=0;if(padRight[index])state->rightTrigger=0;
   if(padRelease[index])state->packet^=0x80000000;
  }
- if(flightOwnsFaceButtons){state->buttons&=~WORD(0x3000);state->packet^=0x40000000;}
+ // Flight reads the real pad itself. The game's copy loses A/B and the left stick: native stick handling
+ // still turns the avatar toward the stick (measured: stick forward left it facing the camera).
+ if(flightOwnsFaceButtons){state->buttons&=~WORD(0x3000);state->lx=state->ly=0;state->packet^=0x40000000;}
  return result;
 }
 typedef BOOL(WINAPI* CursorFn)(int,int);static CursorFn cursorOriginal;

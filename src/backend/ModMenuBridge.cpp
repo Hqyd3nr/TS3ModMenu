@@ -95,8 +95,8 @@ static bool BackupCurrency(const Context& c,DWORD id,int kind,unsigned int amoun
  }
  if(verify!=INVALID_HANDLE_VALUE)CloseHandle(verify);CloseHandle(input);
  if(!ok)return false;
- char text[1024];int length=wsprintfA(text,"Backup before an in-game cheat-menu currency award.\r\nSlot: %d\r\nRequested change: add %u %s.\r\nThis is the complete last on-disk Saved Game file, including all slots and shared profile. Unsaved gameplay changes are not captured. The game was not forced to save. Restore the whole file only with the game and viewer closed. This backup was byte-verified before the award was attempted.\r\n",c.slot+1,amount,kind?"Pixar Balls":"coins");
- if(weapon)length=wsprintfA(text,"Backup before adding a weapon through the in-game cheat menu.\r\nSlot: %d\r\nWeapon: %s\r\nThe requested weapon will be unlocked and equipped without charging currency. Save normally to retain it. This is the complete last on-disk Saved Game, including other slots and profiles; unsaved gameplay is not captured. Restore only with game and viewer closed. Backup was byte-verified before attempting the unlock.\r\n",c.slot+1,weapon);
+ char text[1024];int length=wsprintfA(text,"Mod Menu save backup, made before adding currency.\r\nSlot: %d\r\nRequested change: add %u %s.\r\nThis is a full copy of your last saved game, including all slots and the shared profile. Anything not yet saved in the game is not included. The game was not forced to save.\r\nTo restore it, close the game, then copy this Saved Game file over the one in %%APPDATA%%\\Disney\\Toy Story 3 Complete Edition\\savedata.\r\nThis backup was checked byte for byte before the currency was added.\r\n",c.slot+1,amount,kind?"Pixar Balls":"coins");
+ if(weapon)length=wsprintfA(text,"Mod Menu save backup, made before adding a weapon.\r\nSlot: %d\r\nWeapon: %s\r\nThe weapon is unlocked and equipped without spending currency. Save normally to keep it. This is a full copy of your last saved game, including all slots and the shared profile. Anything not yet saved in the game is not included.\r\nTo restore it, close the game, then copy this Saved Game file over the one in %%APPDATA%%\\Disney\\Toy Story 3 Complete Edition\\savedata.\r\nThis backup was checked byte for byte before the weapon was unlocked.\r\n",c.slot+1,weapon);
  HANDLE note=CreateFileW(readme,GENERIC_WRITE,FILE_SHARE_READ,0,CREATE_NEW,FILE_ATTRIBUTE_NORMAL,0);if(note==INVALID_HANDLE_VALUE)return false;
  DWORD written=0;ok=WriteFile(note,text,length,&written,0)&&written==(DWORD)length;CloseHandle(note);return ok;
 }
@@ -141,7 +141,7 @@ static void ExtrasFrame();
 #include "ModTimers.h"
 #include "ModZurgHud.h"
 #include "ModVehiclesWorld.h"
-static void ExtrasFrame(){PlayerObjects::Frame();WorldNpcs::Frame();ZurgTransform::Frame();CharacterSwitch::Frame();VehiclesWorld::Frame();}
+static void ExtrasFrame(){PlayerObjects::Frame();WorldNpcs::Frame();ZurgTransform::Frame();CharacterSwitch::Frame();ZurgTransform::Retired::Frame();VehiclesWorld::Frame();}
 static bool UpdatePendingCurrency(bool valid,const Context& c,DWORD now=GetTickCount()){
  DWORD elapsed=now-pendingLastTick;pendingLastTick=now;
  // Pauses, loading and suspended frames do not consume the recovery interval.

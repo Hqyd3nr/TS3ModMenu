@@ -25,6 +25,7 @@ static void Capture(const wchar_t* path){
  void* data=nullptr;Require(SUCCEEDED(readback->Map(0,nullptr,&data)),"readback map failed");HANDLE file=CreateFileW(path,GENERIC_WRITE,0,0,CREATE_ALWAYS,FILE_ATTRIBUTE_NORMAL,0);Require(file!=INVALID_HANDLE_VALUE,"capture file failed");DWORD done;for(unsigned y=0;y<desc.Height;++y)WriteFile(file,(BYTE*)data+fp.Offset+y*fp.Footprint.RowPitch,DWORD(desc.Width*4),&done,0);CloseHandle(file);readback->Unmap(0,nullptr);readback->Release();
 }
 extern "C" void TestEntry(){
+ CheatMenuUI::TestLanguage(0); // first: settings storage off, so no test run reads, migrates or writes the player's real settings
  {const unsigned char edge[]={255,255,255,255,0,0,0,0,0,0,0,0,0,0,0,0};unsigned char reduced[4]={};
   IconMipmaps::Reduce(edge,2,2,8,reduced,1,1,4);
   Require(reduced[0]==255&&reduced[1]==255&&reduced[2]==255&&reduced[3]==64,"icon outline darkened during reduction");

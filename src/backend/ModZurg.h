@@ -56,6 +56,57 @@ static bool Available(const Context& c){
  if(Active(c))return shared->original[index]&&Resolve(shared->original[index]);
  return !IsZurg(c.actor); // Do not take over a transformation owned by a pod.
 }
+// Characters a menu switch leaves behind (Zurg <-> original, Woody/Buzz/Jessie) stay hidden and are reused.
+// They stay where you switched. Their scenery collision (actor+28, ActorDisableCollision) is off, but the
+// separate character-vs-character push collision is not: read live in game (2026-11-21), the invisible wall
+// was a hidden TS3Avatar 0.4 units from the player, state 0x420 == 2, scenery collision off, and the player
+// was pushing it. The native pod never shows this because you switch inside the pod.
+// Every native reuse moves the character to you first (0x55f220 in SwitchToZurgNode::Switch, both branches,
+// and in Player > Character), so while it is hidden (0x420 == 2, not anyone's avatar) it is parked high
+// above the spot, out of reach, and re-parked if anything moves it. Scenery collision is also kept off with
+// the same call Flight/noclip uses (0x4170a0 on actor+28).
+namespace Retired {
+static const float parkHeight=1000.f;   // well above anything you can walk or jump to
+struct Entry { unsigned __int64 handle; void* actor; Vec parked; bool hasPark; };
+static Entry list[8];   // 2 players x (Woody, Buzz, Jessie, Zurg)
+static Context world;
+static bool tracking;
+static void Clear(){for(auto& e:list)e={};tracking=false;}
+static void Add(const Context& c,void* actor){
+ if(!actor)return;unsigned __int64 handle=At<unsigned __int64>(actor,0x38);if(!handle)return;
+ if(tracking&&!SameWorld(c,world))Clear();
+ Copy(&world,&c,sizeof(c));tracking=true;
+ for(auto& e:list)if(e.handle==handle){e.actor=actor;e.hasPark=false;return;}
+ for(auto& e:list)if(!e.handle){e.handle=handle;e.actor=actor;e.hasPark=false;return;}
+}
+static void Park(Entry& e,void* actor){
+ Vec now=At<Vec>(actor,0x80);
+ if(!e.hasPark){e.parked=now;e.parked.y+=parkHeight;e.hasPark=true;}
+ float dx=now.x-e.parked.x,dy=now.y-e.parked.y,dz=now.z-e.parked.z;
+ if(dx*dx+dy*dy+dz*dz<0.25f)return;   // already parked
+ float yaw=((float(*)(float,float))A(0x719554))(At<float>(actor,0x70),At<float>(actor,0x78));
+ ((void(*)(void*,const Vec*,float))A(0x55f220))((BYTE*)actor+0x50,&e.parked,yaw);   // native avatar placement
+}
+static void Frame(){
+ if(!tracking)return;
+ __try{
+  Context c;if(!ReadContext(Player(),c))return;   // loading or no player: try again next frame
+  if(!SameWorld(c,world)){Clear();return;}
+  void* manager=*(void**)A(0xb2ef50);bool any=false;
+  for(auto& e:list){
+   if(!e.handle)continue;
+   void* actor=Resolve(e.handle);
+   if(actor!=e.actor||PlayerIndex(manager,actor)>=0){e={};continue;}   // gone, or playable again
+   any=true;
+   if(At<int>(actor,0x420)!=2)continue;                                // not in the native hidden state
+   void* collision=At<void*>(actor,0x28);
+   if(collision)((void(*)(void*,int))A(0x4170a0))(collision,0);
+   Park(e,actor);
+  }
+  if(!any)tracking=false;
+ }__except(EXCEPTION_EXECUTE_HANDLER){Clear();}
+}
+}
 static void Request(const Context& c){
  Observe(c);
  if(!Available(c)){Message(TS3CheatInvalid,"Zurg transformation is unavailable right now.");return;}
@@ -107,6 +158,7 @@ static void Frame(){
   // branches create/retire Zurg's mission givers and their effects. The native
   // Switch method already sends the vehicle manager's To/FromZurg messages.
   if(changed&&c.toyBox)((void(*)(void*,void*))A(0x4df9d0))(machine,0);
+  if(changed)Retired::Add(c,c.actor);   // the character just left behind
   Message(changed?TS3CheatOk:TS3CheatFault,changed?(back?"Original character restored.":"Playing as Zurg."):"The game could not switch characters.");
  }__except(EXCEPTION_EXECUTE_HANDLER){Message(TS3CheatFault,"Transformation stopped after a game-state change.");}
 }
