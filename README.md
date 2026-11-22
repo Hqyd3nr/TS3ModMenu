@@ -21,7 +21,7 @@ Early builds are posted to [Releases](../../releases) as pre-releases before the
 - **Vehicles** — Summon the Sports Car, Teeny Racer, Bullseye, Zurg's Car and the Dragon, each with different styles.
 - **World** — Change the sky to Western, Sid's Haunted House, Enchanted Glen or Zurg's Spaceport.
 
-## Screenshots
+## Screenshot
 
 ![Woody flying with the Mod Menu open](docs/images/screenshot.jpg)
 
