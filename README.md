@@ -52,6 +52,10 @@ Controllers use XInput or Steam Input.
 
 Remove the supplied DLLs and restore any files you replaced. Keep your `Mod Menu/Backups` folder before removing the mod folder. Removing the mod will not undo currency, weapon or picture-disc changes saved in the game.
 
+## Reporting problems
+
+Found a bug? Open an [issue](../../issues) and include the version shown at the bottom of Settings, whether you play with keyboard or controller, and what happened.
+
 ## Repository layout
 
 | Folder | Contents |
