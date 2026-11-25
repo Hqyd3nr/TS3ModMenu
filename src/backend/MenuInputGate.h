@@ -169,8 +169,8 @@ static BOOL WINAPI Clip(const RECT* r){return Blocked()?clipOriginal(0):clipOrig
 static SHORT WINAPI Key(int key){return Blocked()||Suppressed(key)?0:keyOriginal(key);}
 static bool InputMessage(UINT m){return (m>=WM_KEYFIRST&&m<=WM_KEYLAST)||(m>=WM_MOUSEFIRST&&m<=WM_MOUSELAST)||m==WM_INPUT;}
 static LRESULT WINAPI Dispatch(const MSG* msg){
- // The native overlay needs messages to reach ReShade's window handler.
- // ReShade blocks their delivery to gameplay; DirectInput remains neutralized.
+ // While the menu is open its window handler receives these messages and keeps them from gameplay.
+ // DirectInput remains neutralized.
  if(ExternalOpen())return dispatchOriginal(msg);
  if(msg&&Blocked()&&InputMessage(msg->message)){
   // Foreground raw input packets still need the documented default cleanup.

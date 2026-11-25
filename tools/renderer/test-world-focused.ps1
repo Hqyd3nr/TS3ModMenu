@@ -17,7 +17,7 @@ if($LASTEXITCODE -ne 0){throw 'Renderer test compile failed'}
 if($LASTEXITCODE -ne 0){throw 'Input test compile failed'}
 & "$ceTools\cl.exe" /nologo /c /O2 /Oi /Zl /GS- /GR- /std:c++17 /Zc:threadSafeInit- /DUI_SELF_TEST /DUNICODE /D_UNICODE work/CompleteEdition/mod-menu/ModMenuUI.cpp /Fowork/CompleteEdition/mod-menu/standalone/CheatMenuUITest.obj
 if($LASTEXITCODE -ne 0){throw 'Menu test compile failed'}
-& "$ceTools\link.exe" /nologo /NODEFAULTLIB /ENTRY:TestEntry /SUBSYSTEM:CONSOLE /MACHINE:X64 /OUT:$out/RendererTest.exe work/CompleteEdition/mod-menu/standalone/RendererTest.obj work/CompleteEdition/mod-menu/standalone/NativeUITest.obj work/CompleteEdition/mod-menu/standalone/CheatMenuUITest.obj work/CompleteEdition/mod-menu/standalone/OptionalEffects.obj work/CompleteEdition/toolchain/imports/kernel32.lib work/CompleteEdition/toolchain/imports/user32.lib work/CompleteEdition/mod-menu/ntdll.lib
+& "$ceTools\link.exe" /nologo /NODEFAULTLIB /ENTRY:TestEntry /SUBSYSTEM:CONSOLE /MACHINE:X64 /OUT:$out/RendererTest.exe work/CompleteEdition/mod-menu/standalone/RendererTest.obj work/CompleteEdition/mod-menu/standalone/NativeUITest.obj work/CompleteEdition/mod-menu/standalone/CheatMenuUITest.obj work/CompleteEdition/toolchain/imports/kernel32.lib work/CompleteEdition/toolchain/imports/user32.lib work/CompleteEdition/mod-menu/ntdll.lib
 if($LASTEXITCODE -ne 0){throw 'Renderer test link failed'}
 Push-Location $out
 try { & .\RendererTest.exe; if($LASTEXITCODE -ne 0){throw "Software renderer failed: $LASTEXITCODE"} } finally {Pop-Location}

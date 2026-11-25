@@ -1,12 +1,13 @@
+// TS3ModMenu.dll: draws the menu with Direct3D 12 on top of the game. It hooks the game's swap
+// chain, draws just before each Present, and sends actions to the backend in dinput8.dll.
 #include "../menu/OverlayHost.h"
 #include "Shaders.h"
 #include "IconMipmaps.h"
 extern "C" int _fltused=0;
 #pragma function(memset,memcpy)
+// No C runtime, so the DLL supplies the two memory functions the compiler can call.
 extern "C" void* memset(void* p,int v,size_t n){volatile BYTE* d=(BYTE*)p;for(size_t i=0;i<n;++i)d[i]=(BYTE)v;return p;}
 extern "C" void* memcpy(void* p,const void* s,size_t n){volatile BYTE* d=(BYTE*)p;const BYTE* a=(const BYTE*)s;for(size_t i=0;i<n;++i)d[i]=a[i];return p;}
-bool InstallOptionalEffects(HMODULE,HWND,void(*)());
-void DrainOptionalEffects();
 namespace OverlayHost {
 struct Frame{ID3D12CommandAllocator* allocator;ID3D12Resource* buffer;ID3D12Resource* vertices;void* mapped;UINT64 fence;};
 struct Runtime{
@@ -22,7 +23,7 @@ using ResizeFn=HRESULT(STDMETHODCALLTYPE*)(IDXGISwapChain*,UINT,UINT,UINT,DXGI_F
 using Resize1Fn=HRESULT(STDMETHODCALLTYPE*)(IDXGISwapChain3*,UINT,UINT,UINT,DXGI_FORMAT,UINT,const UINT*,IUnknown* const*);
 using CreateFn=HRESULT(STDMETHODCALLTYPE*)(IDXGIFactory*,IUnknown*,DXGI_SWAP_CHAIN_DESC*,IDXGISwapChain**);
 using CreateHwndFn=HRESULT(STDMETHODCALLTYPE*)(IDXGIFactory2*,IUnknown*,HWND,const DXGI_SWAP_CHAIN_DESC1*,const DXGI_SWAP_CHAIN_FULLSCREEN_DESC*,IDXGIOutput*,IDXGISwapChain1**);
-static LONG presenting;static bool optionalEffects,insideEffects;static DWORD lastEffects;
+static LONG presenting;
 static PresentFn originalPresent;static Present1Fn originalPresent1;static ResizeFn originalResize;static Resize1Fn originalResize1;static CreateFn originalCreate;static CreateHwndFn originalCreateHwnd;
 static void Log(const char* text){OutputDebugStringA(text);WCHAR path[MAX_PATH];DWORD n=GetModuleFileNameW(module,path,MAX_PATH);if(!n||n>=MAX_PATH)return;while(n&&path[n-1]!=L'\\')--n;path[n]=0;lstrcatW(path,L"Mod Menu\\renderer.log");HANDLE f=CreateFileW(path,FILE_APPEND_DATA,FILE_SHARE_READ|FILE_SHARE_WRITE,0,OPEN_ALWAYS,FILE_ATTRIBUTE_NORMAL,0);if(f!=INVALID_HANDLE_VALUE){DWORD done;WriteFile(f,text,lstrlenA(text),&done,0);WriteFile(f,"\r\n",2,&done,0);CloseHandle(f);}}
 HMODULE Module(){return module;}const TS3CheatMenuApi* Backend(){return backend;}bool IsOpen(){return open;}
@@ -107,6 +108,7 @@ Texture CreateTextureRGBA(Runtime*,uint32_t w,uint32_t h,const void* pixels,bool
  D3D12_SHADER_RESOURCE_VIEW_DESC view={};view.Format=desc.Format;view.ViewDimension=D3D12_SRV_DIMENSION_TEXTURE2D;view.Shader4ComponentMapping=D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;view.Texture2D.MipLevels=levels;
  auto handle=rt.srv->GetCPUDescriptorHandleForHeapStart();handle.ptr+=out.handle*rt.descriptorSize;rt.device->CreateShaderResourceView(out.resource,&view,handle);return out;
 }
+// Creates the Direct3D 12 objects the menu needs, the first time it draws.
 static bool Initialize(){
  if(rt.ready)return true;if(rt.failed||!rt.swap||!rt.queue)return false;
  DXGI_SWAP_CHAIN_DESC desc={};if(FAILED(rt.swap->GetDesc(&desc))||desc.BufferCount<1||desc.BufferCount>8)return false;rt.count=desc.BufferCount;rt.window=desc.OutputWindow;
@@ -132,7 +134,7 @@ static bool Initialize(){
  if(FAILED(rt.device->CreateGraphicsPipelineState(&ps,IID_PPV_ARGS(&rt.pipeline))))return false;
  for(unsigned i=0;i<rt.count;++i){auto& f=rt.frames[i];if(FAILED(rt.device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT,IID_PPV_ARGS(&f.allocator))))return false;auto hp=Heap(D3D12_HEAP_TYPE_UPLOAD);auto bd=Buffer(sizeof(NativeVertex)*240000);if(FAILED(rt.device->CreateCommittedResource(&hp,D3D12_HEAP_FLAG_NONE,&bd,D3D12_RESOURCE_STATE_GENERIC_READ,nullptr,IID_PPV_ARGS(&f.vertices))))return false;D3D12_RANGE empty={};if(FAILED(f.vertices->Map(0,&empty,&f.mapped)))return false;}
  if(FAILED(rt.device->CreateCommandList(0,D3D12_COMMAND_LIST_TYPE_DIRECT,rt.frames[0].allocator,nullptr,IID_PPV_ARGS(&rt.list))))return false;rt.list->Close();
- const DWORD pixel=0xffffffff;rt.white=CreateTextureRGBA(&rt,1,1,&pixel);if(!rt.white)return false;rt.ready=true;Log("Standalone D3D12 renderer initialized on first Tab; no ReShade API used.");return true;
+ const DWORD pixel=0xffffffff;rt.white=CreateTextureRGBA(&rt,1,1,&pixel);if(!rt.white)return false;rt.ready=true;Log("Standalone D3D12 renderer initialized on first Tab.");return true;
 }
 static void ReleaseBuffers(){for(auto& f:rt.frames)Release(f.buffer);}
 static void Draw(){
@@ -162,6 +164,7 @@ static void Draw(){
 
  barrier.Transition.StateBefore=D3D12_RESOURCE_STATE_RENDER_TARGET;barrier.Transition.StateAfter=D3D12_RESOURCE_STATE_PRESENT;rt.list->ResourceBarrier(1,&barrier);if(FAILED(rt.list->Close())){Close();return;}ID3D12CommandList* lists[]={rt.list};rt.queue->ExecuteCommandLists(1,lists);f.fence=++rt.serial;if(FAILED(rt.queue->Signal(rt.fence,f.fence))){rt.failed=true;Close();}
 }
+// While the menu is open, keyboard and mouse messages are kept from the game. Losing focus closes it.
 static LRESULT CALLBACK WindowProc(HWND hwnd,UINT msg,WPARAM w,LPARAM l){
  if(msg==WM_KILLFOCUS||(msg==WM_ACTIVATEAPP&&!w))Close();
  if(open){if(msg==WM_MOUSEWHEEL){NativeUI::AddWheel((short)HIWORD(w));return 0;}if(msg==WM_SETCURSOR){SetCursor(nullptr);return TRUE;}if(msg==WM_INPUT)return DefWindowProcW(hwnd,msg,w,l);if((msg>=WM_KEYFIRST&&msg<=WM_KEYLAST)||(msg>=WM_MOUSEFIRST&&msg<=WM_MOUSELAST))return 0;}
@@ -171,6 +174,8 @@ static bool GameplayAvailable(){
  TS3CheatSnapshot snap{};
  return backend&&backend->ReadSnapshot(&snap,sizeof(snap))&&snap.gameReady&&DWORD(GetTickCount()-snap.tick)<750;
 }
+// Runs every frame just before the game presents: handles the open key or button and draws the
+// menu while it's open.
 static void BeforePresent(IDXGISwapChain* swap,UINT flags){
  if(flags&DXGI_PRESENT_TEST)return;
  AcquireSRWLockExclusive(&lock);
@@ -195,12 +200,11 @@ static void BeforePresent(IDXGISwapChain* swap,UINT flags){
   }
   if(!capturing&&(open||openingRequested||assetWarning)&&esc&&!oldEscape)Close();
  }
- oldTab=tab;oldEscape=esc;if(open||WarningVisible()){if(open&&backend)backend->SetOpen(1);if(insideEffects)DrainOptionalEffects();Draw();}
+ oldTab=tab;oldEscape=esc;if(open||WarningVisible()){if(open&&backend)backend->SetOpen(1);Draw();}
  ReleaseSRWLockExclusive(&lock);
 }
-static void AfterEffects(){lastEffects=GetTickCount();insideEffects=true;BeforePresent(rt.swap,0);insideEffects=false;}
-static HRESULT STDMETHODCALLTYPE Present(IDXGISwapChain* s,UINT interval,UINT flags){bool outer=InterlockedIncrement(&presenting)==1;if(outer&&(!optionalEffects||DWORD(GetTickCount()-lastEffects)>250))BeforePresent(s,flags);HRESULT hr=originalPresent(s,interval,flags);InterlockedDecrement(&presenting);return hr;}
-static HRESULT STDMETHODCALLTYPE Present1(IDXGISwapChain1* s,UINT interval,UINT flags,const DXGI_PRESENT_PARAMETERS* p){bool outer=InterlockedIncrement(&presenting)==1;if(outer&&(!optionalEffects||DWORD(GetTickCount()-lastEffects)>250))BeforePresent(s,flags);HRESULT hr=originalPresent1(s,interval,flags,p);InterlockedDecrement(&presenting);return hr;}
+static HRESULT STDMETHODCALLTYPE Present(IDXGISwapChain* s,UINT interval,UINT flags){bool outer=InterlockedIncrement(&presenting)==1;if(outer)BeforePresent(s,flags);HRESULT hr=originalPresent(s,interval,flags);InterlockedDecrement(&presenting);return hr;}
+static HRESULT STDMETHODCALLTYPE Present1(IDXGISwapChain1* s,UINT interval,UINT flags,const DXGI_PRESENT_PARAMETERS* p){bool outer=InterlockedIncrement(&presenting)==1;if(outer)BeforePresent(s,flags);HRESULT hr=originalPresent1(s,interval,flags,p);InterlockedDecrement(&presenting);return hr;}
 static void ResetGraphics(){
  NativeUI::EndReveal();
  if(!rt.device)return;
@@ -208,6 +212,7 @@ static void ResetGraphics(){
  for(auto& f:rt.frames){if(f.vertices&&f.mapped)f.vertices->Unmap(0,nullptr);Release(f.vertices);Release(f.allocator);f={};}
  Release(rt.list);Release(rt.pipeline);Release(rt.root);Release(rt.srv);Release(rt.rtv);Release(rt.fence);Release(rt.device);if(rt.event)CloseHandle(rt.event);rt.event=nullptr;rt.ready=false;rt.serial=0;
 }
+// The game is resizing its buffers, so release ours first. They're created again when needed.
 static HRESULT STDMETHODCALLTYPE Resize(IDXGISwapChain* s,UINT count,UINT width,UINT height,DXGI_FORMAT format,UINT flags){
  AcquireSRWLockExclusive(&lock);if((void*)s==(void*)rt.swap){Close();if(!Flush()){rt.failed=true;ReleaseSRWLockExclusive(&lock);return DXGI_ERROR_DEVICE_RESET;}ResetGraphics();}ReleaseSRWLockExclusive(&lock);
  HRESULT hr=originalResize(s,count,width,height,format,flags);return hr;
@@ -217,6 +222,8 @@ static HRESULT STDMETHODCALLTYPE Resize1(IDXGISwapChain3* s,UINT count,UINT widt
  return originalResize1(s,count,width,height,format,flags,masks,queues);
 }
 static bool Hook(void** table,unsigned slot,void* target,void** original){if(table[slot]==target)return true;if(*original&&*original!=table[slot])return false;DWORD old;if(!VirtualProtect(table+slot,sizeof(void*),PAGE_READWRITE,&old))return false;*original=table[slot];InterlockedExchangePointer(table+slot,target);DWORD unused;VirtualProtect(table+slot,sizeof(void*),old,&unused);return true;}
+// Hooks Present and ResizeBuffers on the game's swap chain. GPU resources are only created the
+// first time the menu opens.
 static void AttachSwap(IUnknown* device,IDXGISwapChain* swap){
  ID3D12CommandQueue* queue=nullptr;IDXGISwapChain3* chain=nullptr;if(FAILED(device->QueryInterface(IID_PPV_ARGS(&queue))))return;
  if(FAILED(swap->QueryInterface(IID_PPV_ARGS(&chain)))){Release(queue);return;}DXGI_SWAP_CHAIN_DESC desc={};chain->GetDesc(&desc);if(!desc.OutputWindow||queue->GetDesc().Type!=D3D12_COMMAND_LIST_TYPE_DIRECT){Release(chain);Release(queue);return;}
@@ -229,12 +236,13 @@ static void AttachSwap(IUnknown* device,IDXGISwapChain* swap){
 
  rt.swap=chain;rt.queue=queue;rt.window=desc.OutputWindow;rt.oldProc=(WNDPROC)SetWindowLongPtrW(rt.window,GWLP_WNDPROC,(LONG_PTR)WindowProc);
  void** vt=*(void***)chain;bool ok=Hook(vt,8,(void*)Present,(void**)&originalPresent)&&Hook(vt,13,(void*)Resize,(void**)&originalResize)&&Hook(vt,22,(void*)Present1,(void**)&originalPresent1)&&Hook(vt,39,(void*)Resize1,(void**)&originalResize1);
- if(ok&&!optionalEffects){optionalEffects=InstallOptionalEffects(module,rt.window,AfterEffects);if(optionalEffects)Log("Optional existing ReShade detected: drawing after effects. ReShade is not required.");}
  if(!ok){rt.failed=true;Log("Swap-chain hooks unavailable; menu disabled.");}else Log("Game swap chain attached; Tab ready. GPU resources remain unallocated until opened.");
 }
 static HRESULT STDMETHODCALLTYPE Create(IDXGIFactory* f,IUnknown* d,DXGI_SWAP_CHAIN_DESC* desc,IDXGISwapChain** out){HRESULT hr=originalCreate(f,d,desc,out);if(SUCCEEDED(hr)&&out&&*out)AttachSwap(d,*out);return hr;}
 static HRESULT STDMETHODCALLTYPE CreateHwnd(IDXGIFactory2* f,IUnknown* d,HWND h,const DXGI_SWAP_CHAIN_DESC1* desc,const DXGI_SWAP_CHAIN_FULLSCREEN_DESC* full,IDXGIOutput* restrictOutput,IDXGISwapChain1** out){HRESULT hr=originalCreateHwnd(f,d,h,desc,full,restrictOutput,out);if(SUCCEEDED(hr)&&out&&*out)AttachSwap(d,*out);return hr;}
 }
+// Called by dinput8.dll with the game's DXGI factory. Hooking swap chain creation is how the menu
+// finds the game's swap chain.
 extern "C" __declspec(dllexport) BOOL WINAPI AttachCheatFactory(IUnknown* object,const TS3CheatMenuApi* api){
  using namespace OverlayHost;if(!object||!api||api->version!=TS3MenuApiVersion)return FALSE;backend=api;IDXGIFactory2* factory=nullptr;if(FAILED(object->QueryInterface(IID_PPV_ARGS(&factory))))return FALSE;void** vt=*(void***)factory;
  bool ok=Hook(vt,10,(void*)Create,(void**)&originalCreate)&&Hook(vt,15,(void*)CreateHwnd,(void**)&originalCreateHwnd);factory->Release();Log(ok?"Native menu factory hooks installed.":"Native menu factory hooks failed.");return ok;

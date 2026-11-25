@@ -1,3 +1,5 @@
+// The menu itself: pages, the settings drawer, themes and saved preferences. Drawn every frame
+// while open; actions go to the game through OverlayHost::Backend().
 #include "OverlayHost.h"
 #include "Localization.generated.h"
 #include "FallbackFont.generated.h"
@@ -10,6 +12,7 @@ namespace NativeUI {void TestPointer(ImVec2,bool,bool);}
 namespace CheatMenuUI {
 using namespace CheatMenuAssets;
 static float Min(float a,float b){return a<b?a:b;}
+static bool BetaBuild(){for(const char* v=TS3_MENU_VERSION;*v;++v)if(v[0]=='B'&&v[1]=='e'&&v[2]=='t'&&v[3]=='a')return true;return false;}
 static float Max(float a,float b){return a>b?a:b;}
 static OverlayHost::Texture font,icons[kIconCount];
 static bool assetsAttempted=false,assetsReady=false;
@@ -886,7 +889,8 @@ void Draw(OverlayHost::Runtime* runtime){
  }
  draw->PopClipRect();
  Border(0,0,1040,680);Rule(208,68,832);draw->AddLine(P(208,0),P(208,680),line,scale);
- Icon(GameLogo,18,10,48);Text(78,17,"Mods",Lilita30);
+ // Beta builds (MenuVersion.h says "Beta") show a small Beta label above the title; releases don't.
+ Icon(GameLogo,18,10,48);if(BetaBuild()){Text(79,4,"Beta",Lilita20,IM_COL32(229,165,10,255));Text(78,25,"Mods",Lilita30);}else Text(78,17,"Mods",Lilita30);
  const char* tabs[]={"Player","Currency","Teleport","Objects","Weapons","NPCs","Vehicles","World"};const IconIndex art[]={PlayerActions,Coins,Teleport,Tools,Weapons,NpcTown,VehicleMini,WorldCategory};
  if((page==1||page==4||page==7)&&!state.toyBox)page=0;
  Text(240,23,"Mod menu",Nunito18,muted,154);Text(402,23,"/",Nunito18,muted);Text(424,23,tabs[page],Nunito18,ink,370);

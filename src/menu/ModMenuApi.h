@@ -1,4 +1,6 @@
 #pragma once
+// Shared by dinput8.dll and TS3ModMenu.dll. Raise TS3MenuApiVersion whenever a struct or command
+// changes, so a mismatched pair of DLLs refuses to connect.
 #include <stdint.h>
 inline constexpr uint32_t TS3MenuApiVersion=9;
 // Objects: every carriable model the game ships (assets/characters/carriable),

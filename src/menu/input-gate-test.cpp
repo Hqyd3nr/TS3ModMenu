@@ -1,3 +1,4 @@
+// Offline test for MenuInputGate, with a fake clock. Never opens or touches the game.
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 static DWORD now=1000;static bool held,mouseHeld;

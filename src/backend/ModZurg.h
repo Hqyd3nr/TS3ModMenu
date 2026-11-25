@@ -43,7 +43,18 @@ static int PlayerIndex(void* manager,void* actor){
 }
 static bool IsZurg(void* actor){return actor&&((int(*)(void*,void*))A(0x166a30))(0,actor)==4;}
 static void Reset(){for(int i=0;i<2;++i)state.original[i]=state.zurg[i]=0;tracked=false;}
-static void Observe(const Context& c){if(tracked&&!SameWorld(c,identity))Reset();}
+// Steam achievement 39 "The Emperor's Clothes" (Transform into Emperor Zurg) is awarded by
+// AmBecomeZurg@TrophyHelper: vtable slot at 0x7a6210 -> 0x1a0af0 (mov edx,39; jmp 0x27ac30, the award queue).
+// Play as Zurg must not hand it out. Only that slot is replaced, and only while the player is Zurg because of
+// the menu (or within 10 s of a menu switch, in case the award is queued late); the pod still awards it.
+static volatile LONG menuZurg;static volatile DWORD menuSwitchTick;static bool achievementGuard;
+// The original returns the queue insert's result (al=1); a skipped award reports the same success.
+typedef bool(*AwardFn)(void*,void*,void*,void*);static AwardFn zurgAward;
+static bool ZurgAchievement(void* a,void* b,void* c,void* d){
+ if(menuZurg||(menuSwitchTick&&DWORD(GetTickCount()-menuSwitchTick)<10000))return true;
+ return zurgAward(a,b,c,d);
+}
+static void Observe(const Context& c){if(tracked&&!SameWorld(c,identity))Reset();if(menuZurg&&!IsZurg(c.actor))InterlockedExchange(&menuZurg,0);}
 static bool Active(const Context& c){
  SwitchState* shared=StateFor(c);if(!shared||(!c.toyBox&&(!tracked||!SameWorld(c,identity))))return false;
  int index=PlayerIndex(*(void**)A(0xb2ef50),c.actor);
@@ -107,6 +118,18 @@ static void Frame(){
  }__except(EXCEPTION_EXECUTE_HANDLER){Clear();}
 }
 }
+// Story levels switch between the characters in the player manager's list: a count at +8 and handles
+// from +0x10, each in the slot given by the character's actor+0x480 (the game adds one at 0x5b4953).
+// Creating Zurg adds him there too, so after transforming back the level's own switching could pick the
+// hidden, parked Zurg and leave you controlling him (seen live 2026-11-25). Keep Zurg on the list only
+// while you are him, exactly as the first transformation leaves it.
+static void StoryTeam(void* manager,unsigned __int64 zurg,bool listed){
+ void* actor=zurg?Resolve(zurg):0;if(!manager||!actor)return;
+ int slot=At<int>(actor,0x480);if(slot<0||slot>15)return;
+ unsigned __int64& entry=At<unsigned __int64>(manager,0x10+slot*8);int& count=At<int>(manager,8);
+ if(!listed&&entry==zurg&&count>0){entry=0;--count;}
+ else if(listed&&!entry&&count<16){entry=zurg;++count;}
+}
 static void Request(const Context& c){
  Observe(c);
  if(!Available(c)){Message(TS3CheatInvalid,"Zurg transformation is unavailable right now.");return;}
@@ -150,15 +173,25 @@ static void Frame(){
     ((void(*)(void*,const char*,void*,void*,unsigned __int64))A(0x49e0b0))(*(void**)A(0xb29a70),"RespawnAvatar",0,0,shared->zurg[index]);
    }
   }
+  // Zurg's blaster sound (zurg_gun_1) is in zurg_main.fev. Toy Box always has that bank loaded; story levels
+  // only load their own, so Zurg fired silently there. Load it the same way spawned characters get theirs
+  // (native loader, non-persistent, so the level's audio teardown frees it). No sound is not worth failing over.
+  if(!back&&!c.toyBox)WorldNpcs::NpcAudio::Ensure("zurg_main.fev");
   unsigned __int64 expected=back?shared->original[index]:shared->zurg[index];
   float yaw=((float(*)(float,float))A(0x719554))(At<float>(c.actor,0x70),At<float>(c.actor,0x78));
+  menuSwitchTick=GetTickCount();   // before the switch: the award may be queued inside it
+  InPlace::CameraFlags cameraFlags[16];unsigned cameraCount=c.toyBox?0:InPlace::SaveCameraFlags(cameraFlags,16);
+  if(!c.toyBox)InPlace::HoldCamera();   // story levels reset the camera a frame later
   InPlace::Invoke(shared,c.actor,index,yaw,(InPlace::SwitchFn)A(0x187060));
+  InPlace::RestoreCameraFlags(cameraFlags,cameraCount);   // no snap from re-attaching the camera
   bool changed=At<void*>(manager,0x1a0+index*0x58)==Resolve(expected)&&Resolve(expected)!=c.actor;
+  if(changed){menuSwitchTick=GetTickCount();InterlockedExchange(&menuZurg,back?0:1);}
   // This is the native node's post-switch output. Its three authored
   // branches create/retire Zurg's mission givers and their effects. The native
   // Switch method already sends the vehicle manager's To/FromZurg messages.
   if(changed&&c.toyBox)((void(*)(void*,void*))A(0x4df9d0))(machine,0);
   if(changed)Retired::Add(c,c.actor);   // the character just left behind
+  if(changed&&!c.toyBox)StoryTeam(manager,shared->zurg[index],!back);
   Message(changed?TS3CheatOk:TS3CheatFault,changed?(back?"Original character restored.":"Playing as Zurg."):"The game could not switch characters.");
  }__except(EXCEPTION_EXECUTE_HANDLER){Message(TS3CheatFault,"Transformation stopped after a game-state change.");}
 }
@@ -167,6 +200,16 @@ static void Install(){
  const BYTE spawnBytes[]={0x48,0x89,0x5c,0x24,8,0x48,0x89,0x6c,0x24,0x18,0x48,0x89,0x74,0x24,0x20};
  const BYTE lookupBytes[]={0x48,0x89,0x5c,0x24,0x10,0x48,0x89,0x6c,0x24,0x18};
  registryReady=RegionTeleport::Prefix(0x26a570,lookupBytes,sizeof(lookupBytes));
+ // Achievement guard: replace the one vtable cell only if it and its target are exactly as analysed.
+ const BYTE awardBytes[]={0xba,39,0,0,0,0xe9};   // 0x1a0af7: mov edx,39; jmp award queue
+ void** cell=(void**)A(0x7a6210);
+ if(!achievementGuard&&*cell==(void*)A(0x1a0af0)&&RegionTeleport::Prefix(0x1a0af7,awardBytes,sizeof(awardBytes))){
+  DWORD old;if(VirtualProtect(cell,8,PAGE_READWRITE,&old)){
+   zurgAward=(AwardFn)A(0x1a0af0);
+   achievementGuard=InterlockedCompareExchangePointer(cell,(void*)ZurgAchievement,(void*)A(0x1a0af0))==(void*)A(0x1a0af0);
+   DWORD unused;VirtualProtect(cell,8,old,&unused);
+  }
+ }
  ready=registryReady&&RegionTeleport::Prefix(0x187060,switchBytes,sizeof(switchBytes))&&RegionTeleport::Prefix(0x5af7e0,spawnBytes,sizeof(spawnBytes))&&InPlace::Install();
 }
 }

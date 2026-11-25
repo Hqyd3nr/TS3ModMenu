@@ -1,3 +1,5 @@
+// Offline tests for the dinput8 backend. Compiles the real backend with the game's functions
+// replaced by stubs. Never opens or touches the game.
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include <xmmintrin.h>
@@ -22,7 +24,9 @@ static bool Contains(const char* a,const char* b){for(;*a;++a)if(Prefix(a,b))ret
 static void* Resolve(unsigned __int64){return resolvedTestActor;}
 static void Log(const char*,...){}
 static bool requestedFlightPose;static unsigned flightStarts;
-static void Start(void*,bool animate=true){enabled=true;requestedFlightPose=animate;++flightStarts;}
+static void Start(void*,bool animate=true,bool=false){enabled=true;requestedFlightPose=animate;++flightStarts;}
+static void StartFlight(void* a){Start(a);}
+static void* Mount(void*){return 0;}
 static void Stop(const char*){enabled=false;}
 static void Place(void*){}
 static bool Same(void*){return true;}

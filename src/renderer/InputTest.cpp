@@ -1,3 +1,4 @@
+// Offline test for NativeUI mouse input and controller navigation.
 #define UI_SELF_TEST
 #include "../menu/NativeUI.cpp"
 #pragma function(memset)

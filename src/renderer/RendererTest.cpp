@@ -280,7 +280,7 @@ extern "C" void TestEntry(){
   const char* no="This key can't be used.";
   Require(used('W',no)&&used('D',no)&&used(VK_SPACE,no)&&used('E',no)&&used('Q',no)&&used(VK_LSHIFT,no)&&used(VK_RCONTROL,no)&&used(VK_ESCAPE,no)&&used(VK_LWIN,no)&&used(VK_RWIN,no),"movement/flight/menu/Windows key accepted as menu key");
   Require(used('K',nullptr)&&used('F',nullptr)&&used('5',nullptr)&&used(VK_RETURN,nullptr)&&used(VK_UP,nullptr)&&used(VK_BACK,nullptr),"ordinary key refused");
-  Require(used(VK_F12,no)&&used(VK_RMENU,no)&&used(VK_HOME,nullptr),"system key accepted, or ReShade's Home still refused");
+  Require(used(VK_F12,no)&&used(VK_RMENU,no)&&used(VK_HOME,nullptr),"system key accepted, or Home refused");
   Require(used(VK_TAB,nullptr)&&used(VK_F1,nullptr)&&used(VK_INSERT,nullptr)&&used(VK_END,nullptr)&&used(VK_OEM_4,nullptr),"free key refused");}
  NativeUI::TestNavFocus("open-binding");for(int i=0;i<30;++i)Draw();Require(NativeUI::TestNavVisible("open-binding")&&!NativeUI::TestNavContains("reset-position"),"menu key control missing from Settings");
  NativeUI::TestNavInput(0,true,0,false);Draw();Require(CheatMenuUI::Capturing(),"A did not start choosing a menu button");NativeUI::TestNavInput(0,false,0,false);Draw();Draw();Require(CheatMenuUI::Capturing(),"menu button change ended without a press");Capture(L"settings-controls-capture.rgba");
@@ -313,5 +313,5 @@ extern "C" void TestEntry(){
  Require(!IsOpen()&&WarningVisible()&&BuildWarning()&&CheatMenuUI::TestWarningFont()&&NativeUI::vertexCount>1000,"unsupported-build notice has no text");
  Capture(L"unsupported-build.rgba");
  Close();Require(!IsOpen(),"close failed");unsigned oldSnapshots=snapshots;UINT64 oldSerial=rt.serial;BeforePresent(rt.swap,0);Require(snapshots==oldSnapshots&&rt.serial==oldSerial,"hidden menu did work");Require(Flush(),"final fence failed");ResetGraphics();Require(!rt.device&&!rt.ready,"cleanup failed");
- char text[160];int n=wsprintfA(text,"CPU-only WARP renderer: %u checks passed; no game launch or ReShade dependency.\r\n",checks);DWORD done;WriteFile(GetStdHandle(STD_OUTPUT_HANDLE),text,n,&done,0);ExitProcess(0);
+ char text[160];int n=wsprintfA(text,"CPU-only WARP renderer: %u checks passed; no game launch.\r\n",checks);DWORD done;WriteFile(GetStdHandle(STD_OUTPUT_HANDLE),text,n,&done,0);ExitProcess(0);
 }

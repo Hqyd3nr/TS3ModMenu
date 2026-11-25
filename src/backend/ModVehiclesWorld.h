@@ -368,6 +368,8 @@ static void SummonCar(const Context& c,unsigned index,const Vec& at){
 }
 // DriverFromVehicleNode 16ae56 reads BulletVehicle+740. Rider update
 // 43921c uses Rider+18 as the ridden actor handle, for either local player.
+// Riding Bullseye is different: Rider+18 read 0 while riding. The rider gets a Slave component
+// linked to the horse instead (see Mount in the dinput8 source).
 static bool Occupied(void* actor){
  if(!actor||actor==Player())return true;
  auto component=(void*(*)(void*,const char*))A(0x558fb0);

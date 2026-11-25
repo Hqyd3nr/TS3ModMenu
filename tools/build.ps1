@@ -15,9 +15,7 @@ if($HostOnly){return}
 if($LASTEXITCODE -ne 0){throw 'Mod Menu UI compilation failed'}
 & "$ceTools\cl.exe" /nologo /c /O2 /Oi /Zl /GS- /GR- /Zc:threadSafeInit- /std:c++17 /W4 /DUNICODE /D_UNICODE work/CompleteEdition/mod-menu/NativeUI.cpp /Fowork/CompleteEdition/mod-menu/NativeUI.obj
 if($LASTEXITCODE -ne 0){throw 'Native UI compilation failed'}
-& "$ceTools\cl.exe" /nologo /c /O2 /Oi /Zl /GS- /GR- /std:c++17 /DUNICODE /D_UNICODE work/CompleteEdition/mod-menu/standalone/OptionalEffects.cpp /Fowork/CompleteEdition/mod-menu/standalone/OptionalEffects.obj
-if($LASTEXITCODE -ne 0){throw 'Optional effects compatibility compile failed'}
 & "$ceTools\lib.exe" /nologo /machine:x64 /def:work/CompleteEdition/mod-menu/ntdll.def /out:work/CompleteEdition/mod-menu/ntdll.lib
 if($LASTEXITCODE -ne 0){throw 'Stack probe import library failed'}
-& "$ceTools\link.exe" /nologo /DLL /NODEFAULTLIB /ENTRY:DllMain /MACHINE:X64 /OUT:outputs/CompleteEdition/ModMenu/TS3ModMenu.dll /IMPLIB:work/CompleteEdition/mod-menu/TS3CheatMenu.lib work/CompleteEdition/mod-menu/OverlayHost.obj work/CompleteEdition/mod-menu/CheatMenuUI.obj work/CompleteEdition/mod-menu/NativeUI.obj work/CompleteEdition/mod-menu/standalone/OptionalEffects.obj work/CompleteEdition/toolchain/imports/kernel32.lib work/CompleteEdition/toolchain/imports/user32.lib work/CompleteEdition/mod-menu/ntdll.lib
+& "$ceTools\link.exe" /nologo /DLL /NODEFAULTLIB /ENTRY:DllMain /MACHINE:X64 /OUT:outputs/CompleteEdition/ModMenu/TS3ModMenu.dll /IMPLIB:work/CompleteEdition/mod-menu/TS3CheatMenu.lib work/CompleteEdition/mod-menu/OverlayHost.obj work/CompleteEdition/mod-menu/CheatMenuUI.obj work/CompleteEdition/mod-menu/NativeUI.obj work/CompleteEdition/toolchain/imports/kernel32.lib work/CompleteEdition/toolchain/imports/user32.lib work/CompleteEdition/mod-menu/ntdll.lib
 if($LASTEXITCODE -ne 0){throw 'Mod Menu add-on link failed'}

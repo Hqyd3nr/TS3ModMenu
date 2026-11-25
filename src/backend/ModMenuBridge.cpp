@@ -2,6 +2,9 @@
 // The renderer submits POD commands only. Native routines run in Tick(actor).
 #include "../menu/ModMenuApi.h"
 namespace CheatMenuBridge {
+// The menu (TS3ModMenu.dll) and the game run on different threads and share only these plain
+// structs. The menu queues one command at a time; the game thread runs it and publishes a snapshot
+// of the current state for the menu to draw.
 static volatile LONG openFlag,openTick,queueState,snapshotBusy,probeRequested,probeTick;
 static TS3CheatCommand queued;
 static TS3CheatSnapshot published;
@@ -23,6 +26,8 @@ static void Copy(void* to,const void* from,SIZE_T bytes){
  volatile BYTE* d=(volatile BYTE*)to;const volatile BYTE* s=(const volatile BYTE*)from;
  for(SIZE_T i=0;i<bytes;++i)d[i]=s[i];
 }
+// The menu reports that it is open every frame. If that stops for 750 ms (alt-tab, device lost),
+// it counts as closed.
 static bool Open(){return openFlag&&(DWORD)(GetTickCount()-(DWORD)openTick)<750;}
 static void SetOpen(uint32_t open){
  if(open==2){InterlockedExchange(&probeTick,(LONG)GetTickCount());InterlockedExchange(&probeRequested,1);return;}
@@ -37,6 +42,8 @@ static bool ReadSnapshot(TS3CheatSnapshot* out,uint32_t bytes){
  if((DWORD)(GetTickCount()-out->tick)>1500){out->gameReady=out->currencyReady=out->savedPosition=out->teleportPending=out->returnAvailable=0;}
  return out->version==TS3MenuApiVersion;
 }
+// Checks a command from the menu before queueing it. The ranges are checked again here because
+// the menu is a separate DLL.
 static bool Submit(const TS3CheatCommand* command,uint32_t bytes){
  if(!Open()||!command||bytes!=sizeof(TS3CheatCommand)||!command->id||!command->contextId||
     command->action<TS3CheatFlightToggle||command->action>TS3CheatSwitchCharacter)return false;
@@ -66,6 +73,8 @@ static bool NativeMenuOpen(){
  }
  return false;
 }
+// Copies the save file to Mod Menu/Backups and checks the copy byte for byte, with a README on
+// how to restore it. Coins, Pixar Balls and weapons are only added after this succeeds.
 static bool BackupCurrency(const Context& c,DWORD id,int kind,unsigned int amount,const char* weapon=0){
  // Only on an explicit currency or weapon command, never while hidden or on a timer.
  WCHAR source[MAX_PATH],folder[MAX_PATH],saved[MAX_PATH],readme[MAX_PATH];
@@ -108,6 +117,8 @@ static bool CheckCode(){
  __except(EXCEPTION_EXECUTE_HANDLER){return false;}
  return true;
 }
+// Reads what a command needs about the current game: player, save slot, world, whether it's Toy Box,
+// and the coin and Pixar Ball counts. Fails in menus, during loading or if anything looks wrong.
 static bool ReadContext(void* actor,Context& c){
  c.actor=0;c.worldManager=0;c.saveData=0;c.handle=0;c.world=-1;c.slot=-1;c.coins=c.pixar=-1;c.toyBox=c.currency=false;
  __try{
@@ -142,6 +153,8 @@ static void ExtrasFrame();
 #include "ModZurgHud.h"
 #include "ModVehiclesWorld.h"
 static void ExtrasFrame(){PlayerObjects::Frame();WorldNpcs::Frame();ZurgTransform::Frame();CharacterSwitch::Frame();ZurgTransform::Retired::Frame();VehiclesWorld::Frame();}
+// Added coins and Pixar Balls arrive as a pickup you collect. Watch the balance until it reaches
+// the target, or stop waiting after 15 seconds without a change.
 static bool UpdatePendingCurrency(bool valid,const Context& c,DWORD now=GetTickCount()){
  DWORD elapsed=now-pendingLastTick;pendingLastTick=now;
  // Pauses, loading and suspended frames do not consume the recovery interval.
@@ -159,6 +172,7 @@ static bool UpdatePendingCurrency(bool valid,const Context& c,DWORD now=GetTickC
  // A stalled/partial native award is never retried or filled automatically.
  return stalled;
 }
+// Runs one command on the game thread. Only one action that changes the world can run at a time.
 static void Execute(const TS3CheatCommand& command,const Context& c){
  if(RegionTeleport::Active()||PlayerObjects::spawnPending||WorldNpcs::pending||ZurgTransform::pending||CharacterSwitch::pending||VehiclesWorld::pending||VehiclesWorld::skyPending){Message(TS3CheatBusy,"Wait for the current action to finish.");return;}
  __try{
@@ -187,7 +201,7 @@ static void Execute(const TS3CheatCommand& command,const Context& c){
   case TS3CheatGodToggle:PlayerObjects::Toggle(c);break;
   case TS3CheatSpawnObject:PlayerObjects::Request(c,command.amount);break;
   case TS3CheatFlightToggle:
-   if(enabled)Stop("Flight OFF: cheat menu");else Start(c.actor);
+   if(enabled)Stop("Flight OFF: cheat menu");else StartFlight(c.actor);
    Message(TS3CheatOk,enabled?"Flight / noclip enabled.":"Flight / noclip disabled.");break;
   case TS3CheatFlightSpeed:
    if(!enabled){Message(TS3CheatInvalid,"Enable flight to adjust its speed.");break;}
@@ -218,6 +232,7 @@ static void Execute(const TS3CheatCommand& command,const Context& c){
   }
  }__except(EXCEPTION_EXECUTE_HANDLER){Message(TS3CheatFault,"Game state changed; command stopped. Do not repeat a partial currency award.");}
 }
+// Called every frame from the player's actor update.
 static void Tick(void* actor){
  // Tab requests a single game-thread validation without opening or blocking input.
  if(InterlockedExchange(&probeRequested,0)&&DWORD(GetTickCount()-(DWORD)probeTick)<750){
@@ -287,6 +302,7 @@ static void Tick(void* actor){
  snap.lastCommandId=lastCommandId;snap.result=result;if(StatusVisible(GetTickCount()))lstrcpynA(snap.status,status,128);
  if(!InterlockedCompareExchange(&snapshotBusy,1,0)){Copy(&published,&snap,sizeof(snap));InterlockedExchange(&snapshotBusy,0);lastPublish=now;}
 }
+// What TS3ModMenu.dll gets from GetCheatMenuApi: these three calls and nothing else.
 static const TS3CheatMenuApi api={TS3MenuApiVersion,sizeof(TS3CheatMenuApi),SetOpen,ReadSnapshot,Submit};
 }
 extern "C" __declspec(dllexport) const TS3CheatMenuApi* GetCheatMenuApi(uint32_t version){return version==TS3MenuApiVersion?&CheatMenuBridge::api:0;}

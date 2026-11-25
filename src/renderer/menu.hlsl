@@ -1,3 +1,5 @@
+// Menu shader: textured, coloured triangles. During a theme change it only draws inside the
+// reveal circle.
 cbuffer View : register(b0) { float2 scale; float2 offset; uint crisp; float2 revealOrigin; float revealRadius; uint revealEnabled; };
 struct Input {float2 pos:POSITION;float2 uv:TEXCOORD0;float4 color:COLOR0;};
 struct Output {float4 pos:SV_POSITION;float2 uv:TEXCOORD0;float4 color:COLOR0;};

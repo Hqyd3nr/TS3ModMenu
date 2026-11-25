@@ -1,3 +1,5 @@
+// Walk speed, Jump height and the Weapons page. Speed and jump change the game's own values for the
+// player only, and put them back afterwards.
 namespace MovementWeapons {
 #include "ModPictomatic.h"
 static bool ready,fast,jump;
@@ -8,6 +10,7 @@ static void* jumpActor;static unsigned __int64 jumpHandle;static void* jumpVm;st
 static void (*groundOriginal)(void*,float);
 static void (*scriptsOriginal)(void*);
 static const char* locks[]={"UP_Primary","UP_GhostBuster","UP_Abductinator","UP_FairyWand","UP_Blaster","UP_PickAxe","UP_ToolBox","UP_Camera","UP_SlideViewer"};
+// Speed and jump belong to the save slot they were set in. Loading another slot or save turns them off.
 static bool Session(){
  BYTE* s=*(BYTE**)A(0xb29a60);return s&&At<void*>(s,0x1a0)==saveIdentity&&At<int>(s,0x64)==saveSlot;
 }
@@ -25,7 +28,24 @@ static void BoostedGround(void* controller,float dt){
  __finally{for(unsigned i=0;i<count;++i)if(At<float>(controller,speedOffsets[i])==applied[i])At<float>(controller,speedOffsets[i])=before[i];}
 }
 static void Ground(void* controller,float dt){
- if(fast&&!enabled&&Selected(At<void*>(controller,8)))BoostedGround(controller,dt);else groundOriginal(controller,dt);
+ void* owner=At<void*>(controller,8);
+ // Paused while this character flies. Otherwise the walking code keeps starting run, stop, turn and jump
+ // animations for one frame each (seen live as the flight pose blinking) and keeps track of steps you never took.
+ if(enabled&&Same(owner))return;
+ if(fast&&!enabled&&Selected(owner))BoostedGround(controller,dt);else groundOriginal(controller,dt);
+}
+// Finds jumpVelMultiplier in the actor's script variables and returns a pointer to its value.
+// Variables are 16-byte entries; type 1 is a float, stored at +8.
+// Bullseye and the dragon move with BullseyeGroundController (vtable 0x76c858, update in slot 18 at 0x42ec0).
+// Its speed is not a table like the walking one: the update hands the frame time to the shared ground
+// move (0x436ca0), which integrates speed and acceleration with it. Collision and ground contact run
+// separately in GroundFollower. So Walk speed runs the mount's movement update with the frame time
+// scaled, which scales walking, running and sprinting alike.
+static void (*mountOriginal)(void*,float);
+static void MountGround(void* controller,float dt){
+ void* owner=At<void*>(controller,8);
+ if(fast&&!enabled&&owner&&owner==Mount(Player())&&Session())mountOriginal(controller,dt*runMultiplier);
+ else mountOriginal(controller,dt);
 }
 static float* JumpCell(void* actor,void** vmOut){
  void* sc=At<void*>(actor,0x3c0);void* vm=sc?At<void*>(sc,0x20):0;if(!vm)return 0;
@@ -34,13 +54,19 @@ static float* JumpCell(void* actor,void** vmOut){
  void* vars=At<void*>(vm,8);BYTE* entries=vars?*(BYTE**)vars:0;if(!entries)return 0;
  BYTE* entry=entries+index*16;if(*(int*)entry!=1)return 0;*vmOut=vm;return (float*)(entry+8);
 }
+// Puts the original jump value back, unless the game has changed it since.
 static void RestoreJump(){
  __try{if(jumpActor&&Resolve(jumpHandle)==jumpActor){void* vm=0;float* p=JumpCell(jumpActor,&vm);if(p==jumpCell&&vm==jumpVm&&*p==jumpApplied)*p=jumpBase;}}__except(EXCEPTION_EXECUTE_HANDLER){}
  jumpActor=jumpVm=0;jumpCell=0;jumpHandle=0;
 }
-static void ApplyJump(void* actor){
- if(!jump||enabled||!Selected(actor)){if(actor==jumpActor)RestoreJump();return;}
+// While riding Bullseye the horse jumps, from its own jumpVelMultiplier.
+static void* JumpTarget(void* player){void* horse=Mount(player);return horse?horse:player;}
+// Applied every frame, because the game's scripts can set the value again. If they do, the new value
+// becomes the base that the multiplier scales.
+static void ApplyJump(void* player){
+ if(!jump||enabled||!Selected(player)){if(jumpActor&&(player==jumpActor||player==Player()))RestoreJump();return;}
  __try{
+  void* actor=JumpTarget(player);
   if(jumpActor&&jumpActor!=actor)RestoreJump();
   void* vm=0;float* p=JumpCell(actor,&vm);if(!p)return;
   float v=*p;if(!(v>0&&v<10))return;
@@ -49,6 +75,8 @@ static void ApplyJump(void* actor){
   jumpApplied=jumpBase*jumpMultiplier;*p=jumpApplied;
  }__except(EXCEPTION_EXECUTE_HANDLER){jump=false;jumpActor=jumpVm=0;jumpCell=0;}
 }
+// Hooked script update: applies the jump boost around the game's own script run and passes input
+// to the Pict-O-Matic.
 static void Scripts(void* actor){
  if((fast||jump)&&actor==Player()&&!Session()){fast=jump=false;RestoreJump();}
  if(jump||jumpActor)ApplyJump(actor);
@@ -59,7 +87,7 @@ static void Scripts(void* actor){
 static void Toggle(const Context& c,bool speedToggle){
  if(!ready){Message(TS3CheatFault,"Movement cheats are unavailable for this build.");return;}
  if(speedToggle){fast=!fast;if(fast&&runMultiplier==1)runMultiplier=2.f;}else{
-  if(!jump){void* vm=0;if(!JumpCell(c.actor,&vm)){Message(TS3CheatNoGame,"Super jump is unavailable for this character.");return;}}
+  if(!jump){void* vm=0;if(!JumpCell(JumpTarget(c.actor),&vm)){Message(TS3CheatNoGame,"Super jump is unavailable for this character.");return;}}
   jump=!jump;if(jump&&jumpMultiplier==1)jumpMultiplier=1.8f;if(!jump)RestoreJump();
  }
  saveIdentity=c.saveData;saveSlot=c.slot;
@@ -68,12 +96,13 @@ static void Toggle(const Context& c,bool speedToggle){
 }
 static void SetMultiplier(const Context& c,bool running,float value){
  if(!ready||!(value>=0.5f&&value<=(running?5.f:3.f))){Message(TS3CheatInvalid,"Choose a movement value within the slider range.");return;}
- if(!running&&value!=1){void* vm=0;if(!JumpCell(c.actor,&vm)){Message(TS3CheatNoGame,"Super jump is unavailable for this character.");return;}}
+ if(!running&&value!=1){void* vm=0;if(!JumpCell(JumpTarget(c.actor),&vm)){Message(TS3CheatNoGame,"Super jump is unavailable for this character.");return;}}
  saveIdentity=c.saveData;saveSlot=c.slot;
  if(running){runMultiplier=value;fast=value!=1;}
  else {RestoreJump();jumpMultiplier=value;jump=value!=1;if(jump)ApplyJump(c.actor);}
  Message(TS3CheatOk,value==1?(running?"Normal running speed restored.":"Normal jumping restored."):"Movement multiplier updated.");
 }
+// Bit mask of the weapons and tools already unlocked (lock state 5). Toy Box only.
 static unsigned OwnedMask(const Context& c){
  if(!ready||!c.toyBox)return 0;
  __try{void* manager=*(void**)A(0xb2fde0);if(!manager||*(void**)manager!=(void*)A(0x7a2b30))return 0;
@@ -83,6 +112,8 @@ static unsigned OwnedMask(const Context& c){
 // Player2.sx separates gunLock[0..4] from toolLock[0..6]. Menu order is neither enum.
 static unsigned NativeSelection(unsigned index){static const unsigned ids[]={0,1,2,3,4,3,4,5,6};return index<9?ids[index]:0;}
 static const char* SelectionEvent(unsigned index){return index>=1&&index<=4?"SelectNewGun":"SelectNewTool";}
+// Unlocks a weapon if needed, after a save backup, then selects it with the game's own
+// SelectNewGun / SelectNewTool script events.
 static void Equip(const Context& c,unsigned index,DWORD commandId=0){
  if(!c.toyBox){Message(TS3CheatNoGame,"Weapons are Toy Box only.");return;}
  if(!ready||index<1||index>=9){Message(TS3CheatInvalid,"Choose a supported weapon or tool.");return;}
@@ -107,6 +138,7 @@ static void Equip(const Context& c,unsigned index,DWORD commandId=0){
  if(index==8)Pictomatic::Enable(c);
  Message(TS3CheatOk,added?"Weapon added and selected. Close the menu to use it.":"Weapon selected. Close the menu to use it.");
 }
+// Swaps a vtable entry only if it still points at the expected function.
 static bool Cell(ULONG_PTR cell,ULONG_PTR expected,void* replacement){
  void** p=(void**)A(cell);if(*p!=(void*)A(expected))return false;DWORD old;if(!VirtualProtect(p,8,PAGE_READWRITE,&old))return false;
  bool ok=InterlockedCompareExchangePointer(p,replacement,(void*)A(expected))==(void*)A(expected);DWORD unused;VirtualProtect(p,8,old,&unused);return ok;
@@ -114,6 +146,7 @@ static bool Cell(ULONG_PTR cell,ULONG_PTR expected,void* replacement){
 static void Install(){
  __try{
   ready=true;
+// Check the start of every game function used here before hooking anything.
 #include "ModMovementWeaponsGuards.h"
   if(!ready)return;
   if(*(void**)A(0x76dda0+18*8)!=(void*)A(0x4ba10)||*(void**)A(0x7ae830+18*8)!=(void*)A(0x5618d0)){ready=false;return;}
@@ -122,6 +155,11 @@ static void Install(){
   if(!Cell(0x782258+35*8,0x120800,(void*)Pictomatic::Entry)){ready=false;return;}
   groundOriginal=(void(*)(void*,float))A(0x4ba10);scriptsOriginal=(void(*)(void*))A(0x5618d0);
   ready=Cell(0x76dda0+18*8,0x4ba10,(void*)Ground)&&Cell(0x7ae830+18*8,0x5618d0,(void*)Scripts);
+  // Optional: Walk speed on mounts. Without a matching build, Walk speed still works on foot.
+  const BYTE mountBytes[]={0x40,0x57,0x48,0x81,0xec,0x90,0x0,0x0,0x0,0x48,0x8b,0xf9};
+  if(ready&&RegionTeleport::Prefix(0x42ec0,mountBytes,sizeof(mountBytes))&&*(void**)A(0x76c858+18*8)==(void*)A(0x42ec0)){
+   mountOriginal=(void(*)(void*,float))A(0x42ec0);Cell(0x76c858+18*8,0x42ec0,(void*)MountGround);
+  }
  }__except(EXCEPTION_EXECUTE_HANDLER){ready=false;}
 }
 }

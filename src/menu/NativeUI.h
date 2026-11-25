@@ -2,7 +2,7 @@
 #include <windows.h>
 #include <stdint.h>
 // Small immediate-mode input/drawing adapter for the existing hand-drawn menu.
-// No ReShade or Dear ImGui runtime is used.
+// No third-party UI runtime is used.
 using ImU32=uint32_t;using ImTextureID=uint64_t;using ImTextureRef=uint64_t;
 struct ImVec2{float x,y;ImVec2(float a=0,float b=0):x(a),y(b){}};
 #define IM_COL32(r,g,b,a) ((ImU32)(r)|((ImU32)(g)<<8)|((ImU32)(b)<<16)|((ImU32)(a)<<24))

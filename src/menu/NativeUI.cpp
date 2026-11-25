@@ -1,3 +1,5 @@
+// Mouse and controller input, and a small triangle batcher. Every shape becomes triangles that
+// NativeHost.cpp draws with the game's Direct3D 12 device.
 #include "NativeUI.h"
 #include <xmmintrin.h>
 namespace NativeUI{
@@ -10,6 +12,8 @@ static IO io;static ImDrawList list;static ImVec2 cursor;static bool down,previo
 static unsigned active,lastId;static int mouseCursor;static RECT clips[8];static int clipTop;
 static float Root(float x){return _mm_cvtss_f32(_mm_sqrt_ss(_mm_set_ss(x)));}
 void EndReveal(){revealVertexCount=revealBatchCount=0;previousVertices=previousBatches=0;}
+// Circular theme reveal: keep a copy of the last frame's menu so both themes can be drawn while a
+// circle grows from origin to the farthest corner. The shader only draws inside that circle.
 void BeginReveal(ImVec2 origin,ImVec2 a,ImVec2 b){
  if(!previousVertices||!previousBatches)return;
  if(!revealVertices)revealVertices=(NativeVertex*)VirtualAlloc(0,sizeof(NativeVertex)*120000,MEM_RESERVE|MEM_COMMIT,PAGE_READWRITE);
@@ -57,16 +61,18 @@ void ClearInput(){mouseKnown=false;navEligible=0;navCount=0;navAccept=navBack=fa
 void Shutdown(){if(vertices)VirtualFree(vertices,0,MEM_RELEASE);if(batches)VirtualFree(batches,0,MEM_RELEASE);if(revealVertices)VirtualFree(revealVertices,0,MEM_RELEASE);if(revealBatches)VirtualFree(revealBatches,0,MEM_RELEASE);vertices=0;batches=0;revealVertices=0;revealBatches=0;EndReveal();}
 bool Overflowed(){return overflow;}IO& GetIO(){return io;}ImDrawList* GetWindowDrawList(){return &list;}ImDrawList* GetForegroundDrawList(){return &list;}
 void SetCursorScreenPos(ImVec2 p){cursor=p;}
+// A clickable area with nothing drawn. True on mouse release over it, or when the controller selects it.
 bool InvisibleButton(const char* name,ImVec2 size){
  unsigned id=Hash(name);lastId=id;hover=io.MousePos.x>=cursor.x&&io.MousePos.y>=cursor.y&&io.MousePos.x<cursor.x+size.x&&io.MousePos.y<cursor.y+size.y;
  const RECT& clip=clips[clipTop];hover=hover&&io.MousePos.x>=clip.left&&io.MousePos.x<clip.right&&io.MousePos.y>=clip.top&&io.MousePos.y<clip.bottom;
  activated=hover&&clicked;if(activated)active=id;
  bool result=released&&active==id&&hover;if(released&&active==id)active=0;if(navMode&&navFocus==id&&navEligible==id&&navAccept){navAccept=false;result=true;}return result;
 }
-bool IsItemHovered(){return hover;}bool IsItemActive(){return active!=0&&down&&active==lastId;} // replaced below with last id
+bool IsItemHovered(){return hover;}bool IsItemActive(){return active!=0&&down&&active==lastId;}
 bool IsItemActivated(){return activated;}bool IsMouseDown(int){return down;}bool IsMouseClicked(int){return clicked;}
 void SetMouseCursor(int c){mouseCursor=c;}int GetMouseCursor(){return mouseCursor;}
 void TextUnformatted(const char* text){OutputDebugStringA(text);}
+// Adds one triangle, starting a new batch whenever the texture or clip rectangle changes.
 static void Tri(uint64_t texture,NativeVertex a,NativeVertex b,NativeVertex c){
  if(vertexCount+3>120000||batchCount>=4096){overflow=true;return;}
  RECT clip=clips[clipTop];NativeBatch* last=batchCount?&batches[batchCount-1]:0;

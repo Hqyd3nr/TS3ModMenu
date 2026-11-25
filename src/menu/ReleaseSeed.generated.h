@@ -1,2 +1,2 @@
 #pragma once
-#define TS3_STRING_SEED 0x8010C13Cu
+#define TS3_STRING_SEED 0x2C02A0B4u

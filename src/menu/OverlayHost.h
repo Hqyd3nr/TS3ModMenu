@@ -1,4 +1,5 @@
 #pragma once
+// What the menu UI (ModMenuUI.cpp) and the Direct3D 12 host (NativeHost.cpp) need from each other.
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <windows.h>
