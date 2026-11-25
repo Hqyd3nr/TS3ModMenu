@@ -19,13 +19,5 @@ Fonts (assets/menu)
   Both are licensed under the SIL Open Font License, Version 1.1. See assets/menu/OFL-LilitaOne.txt
   and assets/menu/OFL-Nunito.txt.
 
-Compatibility SDK headers (vendor/reshade*.hpp, vendor/addon_manager-reference.hpp,
-vendor/runtime_gui-reference.cpp)
-  Copyright 2014 Patrick Mours. Licensed under the BSD 3-Clause License. See vendor/RESHADE-LICENSE.md.
-  Release ZIPs include these terms as Mod Menu/licenses/Compatibility-SDK-license.txt.
-
-Dear ImGui headers (vendor/imgui.h, vendor/imconfig.h)
-  Copyright (c) 2014-2025 Omar Cornut. Licensed under the MIT License. See vendor/IMGUI-LICENSE.txt.
-
 INSPIRATION
 The interface and typography are inspired by the Toy Story 3 Companion app.
