@@ -65,7 +65,7 @@ static void Frame(){
   void* other=At<void*>(manager,0x1a0+(1-index)*0x58);
   void* avatar=cached[index][target]?Resolve(cached[index][target]):0;
   if(avatar&&(avatar==source||avatar==other||Kind(avatar)!=int(target)))avatar=0;
-  if(enabled)Stop("Flight OFF: character switch");
+  if(enabled)Stop("[Flight] Turned off for the character switch");
   if(!avatar){
    // Synchronous native creation; validated before the current character is touched.
    unsigned __int64 props[3]={};

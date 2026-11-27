@@ -9,6 +9,7 @@ static unsigned previousVertices,previousBatches;static DWORD revealStart;static
 unsigned contentVertexCount;void MarkContentEnd(){contentVertexCount=vertexCount;}
 static volatile LONG wheelDelta;void AddWheel(short delta){InterlockedExchangeAdd(&wheelDelta,delta);}
 static IO io;static ImDrawList list;static ImVec2 cursor;static bool down,previous,clicked,released,hover,activated,overflow;
+static bool mousePaused;void PauseMouse(bool paused){mousePaused=paused;}   // another window of ours is active
 static unsigned active,lastId;static int mouseCursor;static RECT clips[8];static int clipTop;
 static float Root(float x){return _mm_cvtss_f32(_mm_sqrt_ss(_mm_set_ss(x)));}
 void EndReveal(){revealVertexCount=revealBatchCount=0;previousVertices=previousBatches=0;}
@@ -51,7 +52,7 @@ bool NewFrame(HWND window,unsigned width,unsigned height){
  #ifdef UI_SELF_TEST
  io.MousePos=testHover;down=false;
 #else
- down=(GetAsyncKeyState(VK_LBUTTON)&0x8000)!=0;
+ down=!mousePaused&&(GetAsyncKeyState(VK_LBUTTON)&0x8000)!=0;if(mousePaused)io.MousePos=ImVec2(-1000,-1000);
 #endif
  NavFrame();
  clicked=down&&!previous;released=!down&&previous;previous=down;

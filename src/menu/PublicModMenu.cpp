@@ -18,6 +18,7 @@ static WCHAR logPath[MAX_PATH];
 static void* flightActor;
 static unsigned __int64 flightHandle;
 static bool enabled,oldCollision,flightPoseActive,flightFacing;
+static bool travelHold;   // teleport is using flight to hold the player while the new area loads
 static float flightYaw;
 static Vec position;
 static float speed=15.0f,fastMultiplier=3.0f;
@@ -25,11 +26,15 @@ static UpdateFn actorBegin,actorEnd,groundBegin,groundUpdate,driverUpdate;
 static DWORD lastLog;
 static ULONG_PTR A(ULONG_PTR rva){return (ULONG_PTR)module+rva;}
 template<class T> static T& At(void* p,SIZE_T offset){return *(T*)((BYTE*)p+offset);}
+#include "ModDiagnostics.h"
+// Messages from the shared menu code go to the session log (Mod Menu\Logs) with a [Category] tag.
 static void Log(const char* message,void* actor=0){
- if(!logPath[0])return;
- char line[400];int n=wsprintfA(line,"[%lu] %s actor=%p\r\n",GetTickCount(),message,actor);
- HANDLE f=CreateFileW(logPath,FILE_APPEND_DATA,FILE_SHARE_READ|FILE_SHARE_WRITE,0,OPEN_ALWAYS,FILE_ATTRIBUTE_NORMAL,0);
- if(f!=INVALID_HANDLE_VALUE){DWORD done;WriteFile(f,line,n,&done,0);CloseHandle(f);}
+ (void)actor;if(!message)return;
+ auto starts=[&](const char* p){const char* m=message;while(*p&&*m==*p){++m;++p;}return !*p;};
+ char text[256];
+ if(starts("Vehicles: ")){wsprintfA(text,"[Vehicles] %s",message+10);Diagnostics::Write(Diagnostics::Debug,text);}
+ else if(starts("Unsupported")){wsprintfA(text,"[Startup] %s",message);Diagnostics::Write(Diagnostics::Error,text);}
+ else Diagnostics::Write(Diagnostics::Info,message);
 }
 // Global player manager. Player one's actor is at +0x1a0, player two's at +0x1f8.
 static void* Players(){return *(void**)A(0xb2ef50);}
@@ -47,6 +52,23 @@ static void* Mount(void* rider){
  void* horse=Resolve(At<unsigned __int64>(slave,0xc0));if(!horse||horse==rider)return 0;
  void* ground=component(horse,"BullseyeGroundController");
  return ground&&At<ULONG_PTR>(ground,0)==A(0x76c858)&&At<void*>(ground,8)==horse?horse:0;
+}
+// Driving a car. Seen live (2026-11-26) in a Toy Box car: the game attaches the player to the car with a
+// Slave component whose +0xc0 is the car's handle (the same link Mount uses for Bullseye), and removes the
+// Slave again when you get out. Bullseye and the dragon are attached the same way, so only a vehicle with an
+// engine (VehiclePowertrain) counts as a car. Some cars also fill the Rider component's +0x18 (rider update
+// 0x43921c) with the car's handle; that path is kept as well.
+static bool Driving(void* player){
+ if(!player)return false;
+ auto component=(void*(*)(void*,const char*))A(0x558fb0);
+ void* slave=component(player,"Slave");
+ if(slave&&At<ULONG_PTR>(slave,0)==A(0x7d6950)&&At<void*>(slave,8)==player){
+  void* car=Resolve(At<unsigned __int64>(slave,0xc0));
+  if(car&&car!=player&&component(car,"VehiclePowertrain"))return true;
+ }
+ void* rider=component(player,"Rider");if(!rider||At<void*>(rider,8)!=player)return false;
+ unsigned __int64 handle=At<unsigned __int64>(rider,0x18);void* car=handle?Resolve(handle):0;
+ return car&&car!=player&&component(car,"BulletVehicle")!=0;
 }
 static bool flightMount;   // flightActor is the horse the player is riding
 // True while p is still the actor flight started on, and still the one the player controls or rides.
@@ -73,22 +95,23 @@ static void Place(void* actor){
 }
 #include "FlightPose.h"
 // Ends flight: restores the collision state saved by Start and the normal animation.
-static void Stop(const char* reason){
+static void Stop(const char* reason,unsigned level=Diagnostics::Info){
  void* previous=flightHandle?Resolve(flightHandle):0;
  if(enabled && previous==flightActor && previous){
   Vec zero={0,0,0};At<Vec>(previous,0xc0)=zero;Commit(previous);Collision(previous,oldCollision);FlightLanding::Begin(previous,flightPoseActive);
  }
- enabled=false;flightPoseActive=false;flightFacing=false;flightMount=false;flightActor=0;flightHandle=0;Log(reason,previous);
+ enabled=false;flightPoseActive=false;flightFacing=false;flightMount=false;flightActor=0;flightHandle=0;Diagnostics::Write(level,reason);
 }
 // Starts flight on actor. Refuses actors with no collision or a stale handle, saves the current
 // collision state for Stop, then turns collision off.
 static void Start(void* actor,bool animate=true,bool mount=false){
  FlightLanding::Cancel();
- void* instance=At<void*>(actor,0x28);if(!instance){Log(TS3_PRIVATE_TEXT("Toggle ignored: no collision instance"),actor);return;}
+ void* instance=At<void*>(actor,0x28);if(!instance){Diagnostics::Write(Diagnostics::Warning,"[Flight] Could not start: this character has no collision object");return;}
  flightActor=actor;flightHandle=At<unsigned __int64>(actor,0x38);
- if(!flightHandle || Resolve(flightHandle)!=actor){flightActor=0;flightHandle=0;Log(TS3_PRIVATE_TEXT("Toggle ignored: invalid actor handle"),actor);return;}
+ if(!flightHandle || Resolve(flightHandle)!=actor){flightActor=0;flightHandle=0;Diagnostics::Write(Diagnostics::Warning,"[Flight] Could not start: the character is no longer valid");return;}
  oldCollision=(At<DWORD>(instance,0x48)&1)!=0;
- position=At<Vec>(actor,0x80);flightFacing=false;enabled=true;flightMount=mount;flightPoseActive=animate;Collision(actor,false);Place(actor);if(flightPoseActive)FlightPose::Apply(actor,true);Log(TS3_PRIVATE_TEXT("Flight ON"),actor);
+ position=At<Vec>(actor,0x80);flightFacing=false;enabled=true;flightMount=mount;flightPoseActive=animate;Collision(actor,false);Place(actor);if(flightPoseActive)FlightPose::Apply(actor,true);
+ Diagnostics::Write(travelHold?Diagnostics::Debug:Diagnostics::Info,travelHold?"[Teleport] Holding the player in place while the area loads":"[Flight] Turned on");
 }
 // While riding, fly the horse (no flight pose: that is the rider's animation); the rider stays on it.
 static void StartFlight(void* player){void* horse=Mount(player);Start(horse?horse:player,!horse,horse!=0);}
@@ -125,7 +148,7 @@ static bool ReadFlightPad(FlightPad& pad){
 // flight position relative to the camera and turns the character towards where it's going.
 static void Tick(void* player){
  void* actor=Mount(player);if(!actor)actor=player;   // the flown actor: the ridden horse, or the player
- if(enabled && !Same(actor))Stop("Flight OFF: player changed");
+ if(enabled && !Same(actor))Stop("[Flight] Turned off: the player character changed");
  DWORD foreground=0;GetWindowThreadProcessId(GetForegroundWindow(),&foreground);
  bool blocked=foreground!=GetCurrentProcessId()
     ||ModMenuInputBlocked()
@@ -185,8 +208,6 @@ static bool Slot(ULONG_PTR table,int slot,ULONG_PTR expected,void* hook,UpdateFn
 static DWORD WINAPI Init(void*){
  module=(BYTE*)GetModuleHandleW(0);
  // No graphics, profile, currency-HUD, audio or separate input-fix installation.
- DWORD n=GetModuleFileNameW(0,logPath,MAX_PATH);
- if(n&&n<MAX_PATH-40){while(n&&logPath[n-1]!=L'\\')--n;logPath[n]=0;lstrcatW(logPath,L"Mod Menu\\backend.log");}else logPath[0]=0;
  // Check every function we hook before touching anything. On any other game version, install nothing.
  if(*(void**)(A(0x7ae830)+17*8)!=(void*)A(0x561870) || *(void**)(A(0x7ae830)+20*8)!=(void*)A(0x5567e0) ||
     *(void**)(A(0x7d7bd8)+16*8)!=(void*)A(0x439020) || *(void**)(A(0x7d7bd8)+17*8)!=(void*)A(0x439b00) ||
@@ -199,6 +220,7 @@ static DWORD WINAPI Init(void*){
  Slot(0x7d7bd8,17,0x439b00,(void*)GroundUpdate,&groundUpdate);
  Slot(0x7608c0,16,0x50240,(void*)DriverUpdate,&driverUpdate);
  Slot(0x7ae830,17,0x561870,(void*)Begin,&actorBegin);
+ Diagnostics::Write(Diagnostics::Success,"[Startup] Game hooks installed");
  return 0;
 }
 // The export the game calls. Load the real dinput8.dll from System32 and pass the call on, then
@@ -215,6 +237,7 @@ extern "C" HRESULT WINAPI ProxyDirectInput8Create(HINSTANCE h,DWORD v,REFIID id,
 // and do everything else on a separate thread.
 BOOL WINAPI DllMain(HINSTANCE h,DWORD reason,LPVOID){
  if(reason==DLL_PROCESS_ATTACH){DisableThreadLibraryCalls(h);
+ Diagnostics::Start();   // crash handler and session log first, before anything else can go wrong
  CheatNativeLoader::Install();
  HANDLE thread=CreateThread(0,0,Init,0,0,0);if(thread)CloseHandle(thread);}return TRUE;
 }

@@ -73,6 +73,14 @@ extern "C" void TestEntry(){
  }
  // Never read or write the player's real saved settings: start from default Light/English.
  CheatMenuUI::TestLanguage(0);CheatMenuUI::TestTheme(0);
+ // In the game the menu is prepared on its own thread (PrepareMenu) while the game keeps presenting, and a frame
+ // draws nothing until that has finished. Released afterwards so the first-open checks below set up inline.
+ {Require(warmAt!=0&&!preparing,"display attach did not schedule preparing");
+  open=true;InterlockedExchange(&preparing,1);UINT64 serial=rt.serial;Draw();Require(rt.serial==serial&&!rt.device,"menu drew while still preparing");InterlockedExchange(&preparing,0);open=false;
+  warmAt=GetTickCount()-1;unsigned flushes=testTextureFlushes;BeforePresent(rt.swap,0);Require(warmAt==0,"preparing did not start");
+  FinishPrepare();Require(!preparing&&rt.ready&&!rt.failed&&testTextureFlushes-flushes==2&&CheatMenuUI::TestIconTextures(),"preparing thread did not set up the renderer and icons");
+  open=true;serial=rt.serial;flushes=testTextureFlushes;Draw();Require(rt.serial!=serial&&!rt.failed&&open&&testTextureFlushes==flushes,"menu did not draw from the prepared textures");
+  Close();Require(Flush(),"prepare fence failed");ResetGraphics();Require(!rt.ready&&!rt.device,"prepared renderer not released");}
  open=true;unsigned initialFlushes=testTextureFlushes;Draw();Require(rt.ready&&!rt.failed&&open,"first menu render failed");
  Require(testTextureFlushes-initialFlushes==2,"first open did not batch texture uploads into two fences");Require(textureUploadCount==0&&!textureBatch,"completed uploads retained staging resources");
  unsigned cachedFlushes=testTextureFlushes;Close();open=true;CheatMenuUI::Opened(&rt);Draw();Require(testTextureFlushes==cachedFlushes,"reopening reuploaded cached textures");Require(NativeUI::vertexCount>100&&NativeUI::batchCount>1&&!NativeUI::Overflowed(),"draw geometry invalid");Capture(L"software-1280x720.rgba");Require(CheatMenuUI::TestIconTextures(),"icon mip chains or sharp font atlas missing");

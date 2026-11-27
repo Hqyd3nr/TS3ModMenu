@@ -2,7 +2,7 @@
 // Shared by dinput8.dll and TS3ModMenu.dll. Raise TS3MenuApiVersion whenever a struct or command
 // changes, so a mismatched pair of DLLs refuses to connect.
 #include <stdint.h>
-inline constexpr uint32_t TS3MenuApiVersion=9;
+inline constexpr uint32_t TS3MenuApiVersion=10;
 // Objects: every carriable model the game ships (assets/characters/carriable),
 // minus five without carry motions or with no real model. Order is shared
 // with the menu's names/categories.
@@ -57,11 +57,16 @@ struct TS3CheatSnapshot {
  uint32_t characterReady; // Toy Box player; Player > Character switch possible.
  int32_t character; // 0 Woody, 1 Buzz, 2 Jessie, -1 other (Zurg) or unknown. Also the command amount.
 };
+// One line of the session log. level: 0 TRACE, 1 DEBUG, 2 INFO, 3 SUCCESS, 4 WARNING, 5 ERROR, 6 FATAL.
+// time: milliseconds since local midnight. sequence counts up from 0 for the whole session.
+struct TS3LogLine { uint32_t sequence, level, time; char text[232]; };
 struct TS3CheatMenuApi {
  uint32_t version, bytes;
  void (*SetOpen)(uint32_t open);
  bool (*ReadSnapshot)(TS3CheatSnapshot* out,uint32_t bytes);
  bool (*Submit)(const TS3CheatCommand* command,uint32_t bytes);
+ void (*Log)(uint32_t level,const char* text);                       // add a line to the session log
+ uint32_t (*ReadLog)(uint32_t first,TS3LogLine* out,uint32_t max);   // lines with sequence >= first
 };
 // SetOpen(1) once per visible frame; expires after 750 ms without refresh.
 // SetOpen(2) requests one gameplay snapshot without opening or capturing input.

@@ -13,7 +13,8 @@ inline const char* entries[][5]={
  {u8"Dark",u8"Oscuro",u8"Sombre",u8"Dunkel",u8"Scuro"},
  {u8"Settings",u8"Ajustes",u8"Param\u00e8tres",u8"Einstellungen",u8"Impostazioni"},
  {u8"APPEARANCE",u8"APARIENCIA",u8"APPARENCE",u8"DARSTELLUNG",u8"ASPETTO"},
- {u8"ABOUT & CREDITS",u8"ACERCA DE Y CR\u00c9DITOS",u8"\u00c0 PROPOS ET CR\u00c9DITS",u8"INFO UND MITWIRKENDE",u8"INFO E RICONOSCIMENTI"},
+ {u8"ABOUT",u8"ACERCA DE",u8"\u00c0 PROPOS",u8"INFO",u8"INFORMAZIONI"},
+ {u8"Credits",u8"Cr\u00e9ditos",u8"Cr\u00e9dits",u8"Mitwirkende",u8"Riconoscimenti"},
  {u8"Created by Hqyd3nr",u8"Creado por Hqyd3nr",u8"Cr\u00e9\u00e9 par Hqyd3nr",u8"Erstellt von Hqyd3nr",u8"Creato da Hqyd3nr"},
  {u8"Version %s",u8"Versi\u00f3n %s",u8"Version %s",u8"Version %s",u8"Versione %s"},
  {u8"Creator, feature direction and interface design.",u8"Creaci\u00f3n, direcci\u00f3n de funciones y dise\u00f1o de interfaz.",u8"Cr\u00e9ation, conception des fonctions et de l'interface.",u8"Entwicklung, Funktionsplanung und Oberfl\u00e4chendesign.",u8"Creazione, progettazione delle funzioni e dell'interfaccia."},
@@ -21,6 +22,8 @@ inline const char* entries[][5]={
  {u8"Object icons and robot, Fairy and Gargoyle portraits.",u8"Iconos de objetos y retratos de robots, hadas y g\u00e1rgolas.",u8"Ic\u00f4nes d'objets et portraits de robots, f\u00e9es et gargouilles.",u8"Objektsymbole sowie Roboter-, Feen- und Gargoyle-Portr\u00e4ts.",u8"Icone degli oggetti e ritratti di robot, fate e gargoyle."},
  {u8"Game artwork",u8"Ilustraciones del juego",u8"Graphismes du jeu",u8"Spielgrafiken",u8"Grafica del gioco"},
  {u8"Interface inspiration",u8"Inspiraci\u00f3n de la interfaz",u8"Inspiration de l'interface",u8"Inspiration der Oberfl\u00e4che",u8"Ispirazione dell'interfaccia"},
+ {u8"Team",u8"Equipo",u8"\u00c9quipe",u8"Team",u8"Squadra"},
+ {u8"Community support and beta testing.",u8"Ayuda a la comunidad y pruebas beta.",u8"Aide \u00e0 la communaut\u00e9 et tests b\u00eata.",u8"Community-Support und Betatests.",u8"Supporto alla community e beta test."},
  {u8"Fonts",u8"Fuentes",u8"Polices",u8"Schriftarten",u8"Caratteri"},
  {u8"Mods",u8"Mods",u8"Mods",u8"Mods",u8"Mod"},
  {u8"Mod menu",u8"Men\u00fa de mods",u8"Menu de mods",u8"Mod-Men\u00fc",u8"Menu mod"},
@@ -493,6 +496,7 @@ inline const char* entries[][5]={
  {u8"D-pad Right",u8"Cruceta derecha",u8"Croix droite",u8"Steuerkreuz rechts",u8"Croce destra"},
  {u8"This button can't be used.",u8"Este bot\u00f3n no se puede usar.",u8"Ce bouton est indisponible.",u8"Diese Taste geht nicht.",u8"Pulsante non utilizzabile."},
  {u8"Zurg is only available in the main Toy Box world and Story Mode.",u8"Zurg solo est\u00e1 disponible en el mundo principal de la Caja de juguetes y en el Modo Historia.",u8"Zurg n'est disponible que dans le monde principal du Coffre \u00e0 jouets et en Mode Histoire.",u8"Zurg ist nur in der Hauptwelt der Spielzeugkiste und im Story-Modus verf\u00fcgbar.",u8"Zurg \u00e8 disponibile solo nel mondo principale della Scatola dei giocattoli e in Modalit\u00e0 Storia."},
+ {u8"Not available while driving.",u8"No disponible mientras conduces.",u8"Indisponible pendant la conduite.",u8"Beim Fahren nicht verf\u00fcgbar.",u8"Non disponibile durante la guida."},
 };
 inline const char* Get(const char* source){
  if(language<=0||language>=count||!source)return source;

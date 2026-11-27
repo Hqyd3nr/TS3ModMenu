@@ -3,6 +3,7 @@
 #include "../menu/OverlayHost.h"
 #include "Shaders.h"
 #include "IconMipmaps.h"
+#include "TraceConsole.cpp"
 extern "C" int _fltused=0;
 #pragma function(memset,memcpy)
 // No C runtime, so the DLL supplies the two memory functions the compiler can call.
@@ -14,9 +15,10 @@ struct Runtime{
  IDXGISwapChain3* swap;ID3D12CommandQueue* queue;ID3D12Device* device;HWND window;WNDPROC oldProc;
  ID3D12DescriptorHeap* srv;ID3D12DescriptorHeap* rtv;ID3D12RootSignature* root;ID3D12PipelineState* pipeline;
  ID3D12GraphicsCommandList* list;ID3D12Fence* fence;HANDLE event;UINT64 serial;Frame frames[8];unsigned count,descriptorSize,rtvSize,nextDescriptor,width,height;
+ ID3D12CommandQueue* uploadQueue;ID3D12Fence* uploadFence;HANDLE uploadEvent;UINT64 uploadSerial;   // texture uploads (see UploadFlush)
  Texture white;bool ready,failed;
 };
-static Runtime rt;static HMODULE module;static const TS3CheatMenuApi* backend;static volatile LONG open;static bool oldTab,oldEscape;static int oldOpenKey;static bool openingRequested;static DWORD openingTick;static bool assetWarning,buildWarning;static DWORD assetWarningTick;static SRWLOCK lock=SRWLOCK_INIT;
+static Runtime rt;static HMODULE module;static const TS3CheatMenuApi* backend;static volatile LONG open;static bool oldTab,oldEscape;static int oldOpenKey;static bool openingRequested;static char openedWith[56];static DWORD warmAt;static DWORD openingTick;static bool assetWarning,buildWarning;static DWORD assetWarningTick;static SRWLOCK lock=SRWLOCK_INIT;   // warmAt: when to prepare the menu in advance (0: done)
 using PresentFn=HRESULT(STDMETHODCALLTYPE*)(IDXGISwapChain*,UINT,UINT);
 using Present1Fn=HRESULT(STDMETHODCALLTYPE*)(IDXGISwapChain1*,UINT,UINT,const DXGI_PRESENT_PARAMETERS*);
 using ResizeFn=HRESULT(STDMETHODCALLTYPE*)(IDXGISwapChain*,UINT,UINT,UINT,DXGI_FORMAT,UINT);
@@ -25,11 +27,21 @@ using CreateFn=HRESULT(STDMETHODCALLTYPE*)(IDXGIFactory*,IUnknown*,DXGI_SWAP_CHA
 using CreateHwndFn=HRESULT(STDMETHODCALLTYPE*)(IDXGIFactory2*,IUnknown*,HWND,const DXGI_SWAP_CHAIN_DESC1*,const DXGI_SWAP_CHAIN_FULLSCREEN_DESC*,IDXGIOutput*,IDXGISwapChain1**);
 static LONG presenting;
 static PresentFn originalPresent;static Present1Fn originalPresent1;static ResizeFn originalResize;static Resize1Fn originalResize1;static CreateFn originalCreate;static CreateHwndFn originalCreateHwnd;
-static void Log(const char* text){OutputDebugStringA(text);WCHAR path[MAX_PATH];DWORD n=GetModuleFileNameW(module,path,MAX_PATH);if(!n||n>=MAX_PATH)return;while(n&&path[n-1]!=L'\\')--n;path[n]=0;lstrcatW(path,L"Mod Menu\\renderer.log");HANDLE f=CreateFileW(path,FILE_APPEND_DATA,FILE_SHARE_READ|FILE_SHARE_WRITE,0,OPEN_ALWAYS,FILE_ATTRIBUTE_NORMAL,0);if(f!=INVALID_HANDLE_VALUE){DWORD done;WriteFile(f,text,lstrlenA(text),&done,0);WriteFile(f,"\r\n",2,&done,0);CloseHandle(f);}}
+// Renderer messages go to the session log in dinput8.dll (Mod Menu\Logs), tagged [Renderer].
+static void Log(const char* text){
+ OutputDebugStringA(text);if(!backend||!backend->Log)return;
+ bool bad=false;for(const char* p=text;*p&&!bad;++p)bad=(p[0]=='f'&&p[1]=='a'&&p[2]=='i'&&p[3]=='l')||(p[0]=='u'&&p[1]=='n'&&p[2]=='a'&&p[3]=='v');
+ char line[256];wsprintfA(line,"[Renderer] %s",text);backend->Log(bad?5:1,line);
+}
 HMODULE Module(){return module;}const TS3CheatMenuApi* Backend(){return backend;}bool IsOpen(){return open;}
-void Close(){assetWarning=false;openingRequested=false;InterlockedExchange(&open,0);if(backend)backend->SetOpen(0);}
-void ShowAssetWarning(){Close();NativeUI::EndReveal();assetWarningTick=GetTickCount();assetWarning=true;buildWarning=false;}
-void ShowBuildWarning(){ShowAssetWarning();buildWarning=true;}
+static void MenuLog(unsigned level,const char* text){if(backend&&backend->Log)backend->Log(level,text);}
+// Closing is logged with its reason, once: most callers run every frame and close an already closed menu.
+void Close(const char* reason){
+ if(open&&reason){char text[160];wsprintfA(text,"[Menu] Closed: %.120s",reason);MenuLog(2,text);}
+ assetWarning=false;openingRequested=false;InterlockedExchange(&open,0);if(backend)backend->SetOpen(0);
+}
+void ShowAssetWarning(){Close("showing the missing-files notice");NativeUI::EndReveal();assetWarningTick=GetTickCount();assetWarning=true;buildWarning=false;if(backend&&backend->Log)backend->Log(5,"[Renderer] Menu artwork is missing or unreadable: showing the notice instead of the menu");}
+void ShowBuildWarning(){ShowAssetWarning();buildWarning=true;if(backend&&backend->Log)backend->Log(4,"[Renderer] Unsupported game version: showing the notice instead of the menu");}
 bool BuildWarning(){return buildWarning;}
 // Same vtable fingerprint the backend checks before installing hooks. The
 // backend replaces these slots on a supported build, so a slot pointing outside
@@ -59,6 +71,11 @@ static bool SupportedBuild(){static int known=-1;if(known<0)known=GameBuildMatch
 
 static bool WarningVisible(){if(assetWarning&&DWORD(GetTickCount()-assetWarningTick)>=12000)assetWarning=false;return assetWarning;}
 static bool Foreground(){HWND f=GetForegroundWindow();return f&&rt.window&&GetAncestor(f,GA_ROOT)==GetAncestor(rt.window,GA_ROOT);}
+// The Trace Console is active: keep the menu as it is (open or closed) instead of treating it as alt-tab.
+static bool ConsoleForeground(){HWND f=GetForegroundWindow();return f&&f==TraceConsole::window;}
+// The cursor is over the Trace Console: it sits on top of the game, so a click there must not reach the
+// menu (the menu would read it as a click outside its panel and close).
+static bool CursorOverConsole(){POINT p;if(!TraceConsole::window||!GetCursorPos(&p))return false;HWND h=WindowFromPoint(p);return h&&GetAncestor(h,GA_ROOT)==TraceConsole::window;}
 template<class T>static void Release(T*& p){if(p){p->Release();p=nullptr;}}
 static bool Wait(UINT64 value){if(!value||rt.fence->GetCompletedValue()>=value)return true;if(FAILED(rt.fence->SetEventOnCompletion(value,rt.event)))return false;return WaitForSingleObject(rt.event,2000)==WAIT_OBJECT_0;}
 #ifdef UI_SELF_TEST
@@ -70,6 +87,16 @@ static bool Flush(){
 #endif
  if(!rt.queue||!rt.fence)return true;UINT64 v=++rt.serial;return SUCCEEDED(rt.queue->Signal(rt.fence,v))&&Wait(v);}
 void WaitForTextures(Runtime*){if(!Flush())rt.failed=true;}
+// Textures are uploaded on the menu's own queue, so the preparing thread never submits work to the queue the
+// game presents on. Every upload is waited for before its texture can be drawn.
+static bool UploadFlush(){
+#ifdef UI_SELF_TEST
+ ++testTextureFlushes;
+#endif
+ if(!rt.uploadQueue||!rt.uploadFence)return true;UINT64 v=++rt.uploadSerial;if(FAILED(rt.uploadQueue->Signal(rt.uploadFence,v)))return false;
+ if(rt.uploadFence->GetCompletedValue()>=v)return true;
+ return SUCCEEDED(rt.uploadFence->SetEventOnCompletion(v,rt.uploadEvent))&&WaitForSingleObject(rt.uploadEvent,5000)==WAIT_OBJECT_0;
+}
 void DestroyTexture(Runtime*,Texture& texture){Release(texture.resource);texture={};}
 static D3D12_HEAP_PROPERTIES Heap(D3D12_HEAP_TYPE type){D3D12_HEAP_PROPERTIES h={};h.Type=type;h.CreationNodeMask=h.VisibleNodeMask=1;return h;}
 static D3D12_RESOURCE_DESC Buffer(UINT64 bytes){D3D12_RESOURCE_DESC d={};d.Dimension=D3D12_RESOURCE_DIMENSION_BUFFER;d.Width=bytes;d.Height=1;d.DepthOrArraySize=1;d.MipLevels=1;d.SampleDesc.Count=1;d.Layout=D3D12_TEXTURE_LAYOUT_ROW_MAJOR;return d;}
@@ -80,12 +107,12 @@ static TextureUpload textureUploads[256];static unsigned textureUploadCount;stat
 void BeginTextureBatch(Runtime*){textureBatch=true;}
 bool EndTextureBatch(Runtime*){
  textureBatch=false;if(!textureUploadCount)return !rt.failed;
- if(!Flush()){rt.failed=true;return false;} // Never free resources still used by the GPU.
+ if(!UploadFlush()){rt.failed=true;return false;} // Never free resources still used by the GPU.
  for(unsigned i=0;i<textureUploadCount;++i){auto& u=textureUploads[i];Release(u.command);Release(u.allocator);Release(u.upload);}
  textureUploadCount=0;return !rt.failed;
 }
 Texture CreateTextureRGBA(Runtime*,uint32_t w,uint32_t h,const void* pixels,bool mipmaps){
- Texture out;if(!rt.device||!rt.srv||rt.nextDescriptor>=256||(textureBatch&&textureUploadCount>=256)||!w||!h||w>8192||h>8192||!pixels)return out;
+ Texture out;if(!rt.device||!rt.uploadQueue||!rt.srv||rt.nextDescriptor>=256||(textureBatch&&textureUploadCount>=256)||!w||!h||w>8192||h>8192||!pixels)return out;
  const unsigned levels=mipmaps?IconMipmaps::Levels(w,h):1;
  D3D12_RESOURCE_DESC desc={};desc.Dimension=D3D12_RESOURCE_DIMENSION_TEXTURE2D;desc.Width=w;desc.Height=h;desc.DepthOrArraySize=1;desc.MipLevels=(UINT16)levels;desc.SampleDesc.Count=1;desc.Format=DXGI_FORMAT_R8G8B8A8_UNORM;
  auto heap=Heap(D3D12_HEAP_TYPE_DEFAULT);if(FAILED(rt.device->CreateCommittedResource(&heap,D3D12_HEAP_FLAG_NONE,&desc,D3D12_RESOURCE_STATE_COPY_DEST,nullptr,IID_PPV_ARGS(&out.resource))))return {};
@@ -101,7 +128,7 @@ Texture CreateTextureRGBA(Runtime*,uint32_t w,uint32_t h,const void* pixels,bool
  bool ok=SUCCEEDED(rt.device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT,IID_PPV_ARGS(&allocator)))&&SUCCEEDED(rt.device->CreateCommandList(0,D3D12_COMMAND_LIST_TYPE_DIRECT,allocator,nullptr,IID_PPV_ARGS(&cmd)));
  if(ok){for(unsigned i=0;i<levels;++i){D3D12_TEXTURE_COPY_LOCATION dst={};dst.pResource=out.resource;dst.Type=D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;dst.SubresourceIndex=i;D3D12_TEXTURE_COPY_LOCATION src={};src.pResource=upload;src.Type=D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;src.PlacedFootprint=footprints[i];cmd->CopyTextureRegion(&dst,0,0,0,&src,nullptr);}
   D3D12_RESOURCE_BARRIER barrier={};barrier.Type=D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;barrier.Transition.pResource=out.resource;barrier.Transition.Subresource=D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;barrier.Transition.StateBefore=D3D12_RESOURCE_STATE_COPY_DEST;barrier.Transition.StateAfter=D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;cmd->ResourceBarrier(1,&barrier);ok=SUCCEEDED(cmd->Close());
-  if(ok){ID3D12CommandList* lists[]={cmd};rt.queue->ExecuteCommandLists(1,lists);ok=textureBatch||Flush();}
+  if(ok){ID3D12CommandList* lists[]={cmd};rt.uploadQueue->ExecuteCommandLists(1,lists);ok=textureBatch||UploadFlush();}
  }
  if(!ok){rt.failed=true;/* Retain resources if a GPU fence failed; never free in-flight memory. */return {};}
  if(textureBatch){textureUploads[textureUploadCount++]={upload,allocator,cmd};}else{Release(cmd);Release(allocator);Release(upload);}out.handle=rt.nextDescriptor++;out.width=w;out.height=h;
@@ -115,6 +142,9 @@ static bool Initialize(){
  if(FAILED(rt.queue->GetDevice(IID_PPV_ARGS(&rt.device))))return false;
  rt.event=CreateEventW(nullptr,FALSE,FALSE,nullptr);if(!rt.event)return false;
  if(FAILED(rt.device->CreateFence(0,D3D12_FENCE_FLAG_NONE,IID_PPV_ARGS(&rt.fence))))return false;
+ {D3D12_COMMAND_QUEUE_DESC q={};q.Type=D3D12_COMMAND_LIST_TYPE_DIRECT;if(FAILED(rt.device->CreateCommandQueue(&q,IID_PPV_ARGS(&rt.uploadQueue))))return false;}
+ if(FAILED(rt.device->CreateFence(0,D3D12_FENCE_FLAG_NONE,IID_PPV_ARGS(&rt.uploadFence))))return false;
+ rt.uploadEvent=CreateEventW(nullptr,FALSE,FALSE,nullptr);if(!rt.uploadEvent)return false;
  D3D12_DESCRIPTOR_HEAP_DESC hd={};hd.Type=D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;hd.NumDescriptors=256;hd.Flags=D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;if(FAILED(rt.device->CreateDescriptorHeap(&hd,IID_PPV_ARGS(&rt.srv))))return false;
  hd.Type=D3D12_DESCRIPTOR_HEAP_TYPE_RTV;hd.NumDescriptors=8;hd.Flags=D3D12_DESCRIPTOR_HEAP_FLAG_NONE;if(FAILED(rt.device->CreateDescriptorHeap(&hd,IID_PPV_ARGS(&rt.rtv))))return false;
  rt.descriptorSize=rt.device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);rt.rtvSize=rt.device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);rt.nextDescriptor=1;
@@ -134,19 +164,38 @@ static bool Initialize(){
  if(FAILED(rt.device->CreateGraphicsPipelineState(&ps,IID_PPV_ARGS(&rt.pipeline))))return false;
  for(unsigned i=0;i<rt.count;++i){auto& f=rt.frames[i];if(FAILED(rt.device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT,IID_PPV_ARGS(&f.allocator))))return false;auto hp=Heap(D3D12_HEAP_TYPE_UPLOAD);auto bd=Buffer(sizeof(NativeVertex)*240000);if(FAILED(rt.device->CreateCommittedResource(&hp,D3D12_HEAP_FLAG_NONE,&bd,D3D12_RESOURCE_STATE_GENERIC_READ,nullptr,IID_PPV_ARGS(&f.vertices))))return false;D3D12_RANGE empty={};if(FAILED(f.vertices->Map(0,&empty,&f.mapped)))return false;}
  if(FAILED(rt.device->CreateCommandList(0,D3D12_COMMAND_LIST_TYPE_DIRECT,rt.frames[0].allocator,nullptr,IID_PPV_ARGS(&rt.list))))return false;rt.list->Close();
- const DWORD pixel=0xffffffff;rt.white=CreateTextureRGBA(&rt,1,1,&pixel);if(!rt.white)return false;rt.ready=true;Log("Standalone D3D12 renderer initialized on first Tab.");return true;
+ const DWORD pixel=0xffffffff;rt.white=CreateTextureRGBA(&rt,1,1,&pixel);if(!rt.white)return false;rt.ready=true;return true;
 }
 static void ReleaseBuffers(){for(auto& f:rt.frames)Release(f.buffer);}
+// Preparing the menu (renderer, font and every icon) takes 1-2 s. Inside one of the game's frames that froze
+// the game, and the opening video and its music, for that long. It runs on its own thread instead; the menu
+// isn't drawn until it has finished, so a menu opened meanwhile appears a moment later.
+static volatile LONG preparing;static HANDLE prepareThread;
+static DWORD WINAPI PrepareMenu(void*){
+ DWORD start=GetTickCount();
+ if(Initialize()){CheatMenuUI::Preload(&rt);char text[96];wsprintfA(text,"[Renderer] Menu prepared in advance (%u ms)",GetTickCount()-start);MenuLog(1,text);}
+ else MenuLog(4,"[Renderer] Menu could not be prepared in advance; it will be set up when it opens");
+ InterlockedExchange(&preparing,0);return 0;
+}
+// Waits for a preparing thread before the renderer is released (display resized or recreated).
+static void FinishPrepare(){if(prepareThread){WaitForSingleObject(prepareThread,INFINITE);CloseHandle(prepareThread);prepareThread=nullptr;}}
+static void StartPrepare(){
+ warmAt=0;FinishPrepare();InterlockedExchange(&preparing,1);
+ prepareThread=CreateThread(nullptr,0,PrepareMenu,nullptr,0,nullptr);
+ if(prepareThread)SetThreadPriority(prepareThread,THREAD_PRIORITY_BELOW_NORMAL);
+ else InterlockedExchange(&preparing,0);   // no thread: set up when the menu first draws, as before
+}
 static void Draw(){
- if(!Initialize()){rt.failed=true;Close();Log("Renderer initialization failed; cheats/menu input released.");return;}
- unsigned i=rt.swap->GetCurrentBackBufferIndex();if(i>=rt.count){Close();return;}auto& f=rt.frames[i];if(!Wait(f.fence)){rt.failed=true;Close();return;}
- if(!f.buffer){if(FAILED(rt.swap->GetBuffer(i,IID_PPV_ARGS(&f.buffer)))){Close();return;}auto d=f.buffer->GetDesc();rt.width=(unsigned)d.Width;rt.height=d.Height;auto handle=rt.rtv->GetCPUDescriptorHandleForHeapStart();handle.ptr+=i*rt.rtvSize;rt.device->CreateRenderTargetView(f.buffer,nullptr,handle);}
- if(!NativeUI::NewFrame(rt.window,rt.width,rt.height)){Close();return;}
+ if(preparing)return;
+ if(!Initialize()){rt.failed=true;Close("the menu could not be drawn");Log("Renderer initialization failed; cheats/menu input released.");return;}
+ unsigned i=rt.swap->GetCurrentBackBufferIndex();if(i>=rt.count){Close("the menu could not be drawn");return;}auto& f=rt.frames[i];if(!Wait(f.fence)){rt.failed=true;Close("the menu could not be drawn");return;}
+ if(!f.buffer){if(FAILED(rt.swap->GetBuffer(i,IID_PPV_ARGS(&f.buffer)))){Close("the menu could not be drawn");return;}auto d=f.buffer->GetDesc();rt.width=(unsigned)d.Width;rt.height=d.Height;auto handle=rt.rtv->GetCPUDescriptorHandleForHeapStart();handle.ptr+=i*rt.rtvSize;rt.device->CreateRenderTargetView(f.buffer,nullptr,handle);}
+ if(!NativeUI::NewFrame(rt.window,rt.width,rt.height)){Close("the menu could not be drawn");return;}
  if(WarningVisible())CheatMenuUI::DrawAssetWarning(&rt);else CheatMenuUI::Draw(&rt);
- if((!open&&!WarningVisible())||NativeUI::Overflowed()||rt.failed){Close();return;}
+ if((!open&&!WarningVisible())||NativeUI::Overflowed()||rt.failed){Close("the menu could not be drawn");return;}
  float reveal[3]={};bool revealing=NativeUI::Reveal(reveal);unsigned oldCount=revealing?NativeUI::revealVertexCount:0;
  if(oldCount)memcpy(f.mapped,NativeUI::revealVertices,oldCount*sizeof(NativeVertex));
- memcpy((NativeVertex*)f.mapped+oldCount,NativeUI::vertices,NativeUI::vertexCount*sizeof(NativeVertex));if(FAILED(f.allocator->Reset())||FAILED(rt.list->Reset(f.allocator,rt.pipeline))){Close();return;}
+ memcpy((NativeVertex*)f.mapped+oldCount,NativeUI::vertices,NativeUI::vertexCount*sizeof(NativeVertex));if(FAILED(f.allocator->Reset())||FAILED(rt.list->Reset(f.allocator,rt.pipeline))){Close("the menu could not be drawn");return;}
  D3D12_RESOURCE_BARRIER barrier={};barrier.Type=D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;barrier.Transition.pResource=f.buffer;barrier.Transition.Subresource=D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;barrier.Transition.StateBefore=D3D12_RESOURCE_STATE_PRESENT;barrier.Transition.StateAfter=D3D12_RESOURCE_STATE_RENDER_TARGET;rt.list->ResourceBarrier(1,&barrier);
  auto rtv=rt.rtv->GetCPUDescriptorHandleForHeapStart();rtv.ptr+=i*rt.rtvSize;rt.list->OMSetRenderTargets(1,&rtv,FALSE,nullptr);rt.list->SetGraphicsRootSignature(rt.root);ID3D12DescriptorHeap* heaps[]={rt.srv};rt.list->SetDescriptorHeaps(1,heaps);
  float view[]={2.f/rt.width,-2.f/rt.height,-1.f,1.f};rt.list->SetGraphicsRoot32BitConstants(0,4,view,0);D3D12_VIEWPORT vp={0,0,float(rt.width),float(rt.height),0,1};rt.list->RSSetViewports(1,&vp);rt.list->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
@@ -162,11 +211,15 @@ static void Draw(){
   }
  }
 
- barrier.Transition.StateBefore=D3D12_RESOURCE_STATE_RENDER_TARGET;barrier.Transition.StateAfter=D3D12_RESOURCE_STATE_PRESENT;rt.list->ResourceBarrier(1,&barrier);if(FAILED(rt.list->Close())){Close();return;}ID3D12CommandList* lists[]={rt.list};rt.queue->ExecuteCommandLists(1,lists);f.fence=++rt.serial;if(FAILED(rt.queue->Signal(rt.fence,f.fence))){rt.failed=true;Close();}
+ barrier.Transition.StateBefore=D3D12_RESOURCE_STATE_RENDER_TARGET;barrier.Transition.StateAfter=D3D12_RESOURCE_STATE_PRESENT;rt.list->ResourceBarrier(1,&barrier);if(FAILED(rt.list->Close())){Close("the menu could not be drawn");return;}ID3D12CommandList* lists[]={rt.list};rt.queue->ExecuteCommandLists(1,lists);f.fence=++rt.serial;if(FAILED(rt.queue->Signal(rt.fence,f.fence))){rt.failed=true;Close("the menu could not be drawn");}
 }
 // While the menu is open, keyboard and mouse messages are kept from the game. Losing focus closes it.
 static LRESULT CALLBACK WindowProc(HWND hwnd,UINT msg,WPARAM w,LPARAM l){
- if(msg==WM_KILLFOCUS||(msg==WM_ACTIVATEAPP&&!w))Close();
+ // WM_ACTIVATEAPP really means "another thread was activated" (lParam is its thread id), and the Trace
+ // Console has its own thread, so activating the console must not count as leaving the game. Focus that
+ // moves to another thread arrives with no window in WM_KILLFOCUS; WM_ACTIVATEAPP decides those.
+ if(msg==WM_KILLFOCUS&&w&&(HWND)w!=TraceConsole::window)Close("the game window lost focus");
+ if(msg==WM_ACTIVATEAPP&&!w&&(DWORD)l!=TraceConsole::threadId)Close("switched to another program");
  if(open){if(msg==WM_MOUSEWHEEL){NativeUI::AddWheel((short)HIWORD(w));return 0;}if(msg==WM_SETCURSOR){SetCursor(nullptr);return TRUE;}if(msg==WM_INPUT)return DefWindowProcW(hwnd,msg,w,l);if((msg>=WM_KEYFIRST&&msg<=WM_KEYLAST)||(msg>=WM_MOUSEFIRST&&msg<=WM_MOUSELAST))return 0;}
  return CallWindowProcW(rt.oldProc,hwnd,msg,w,l);
 }
@@ -180,6 +233,12 @@ static void BeforePresent(IDXGISwapChain* swap,UINT flags){
  if(flags&DXGI_PRESENT_TEST)return;
  AcquireSRWLockExclusive(&lock);
  if((void*)swap!=(void*)rt.swap){ReleaseSRWLockExclusive(&lock);return;}
+ // Prepare the menu before it is ever opened: the renderer and every texture (icons, portraits, fonts).
+ // Done on the first Tab, this took about 2 s on one frame; the game froze, its gameplay report went stale
+ // and the menu closed again, so the first Tab never seemed to work. It starts 1.5 s after the game creates
+ // or resizes its display (normally the title screen), or at once if the menu is wanted sooner, and runs on
+ // its own thread (PrepareMenu).
+ if(warmAt&&!preparing&&!rt.failed&&backend&&(LONG(GetTickCount()-warmAt)>=0||open||openingRequested||WarningVisible()))StartPrepare();
  // Settings > Controls chooses the key/button; while it waits for one, neither opens nor closes the menu.
  const int openKey=CheatMenuUI::OpenKey();const bool capturing=open&&CheatMenuUI::Capturing();
  bool tab=(GetAsyncKeyState(openKey)&0x8000)!=0,esc=(GetAsyncKeyState(VK_ESCAPE)&0x8000)!=0;
@@ -187,18 +246,29 @@ static void BeforePresent(IDXGISwapChain* swap,UINT flags){
  // A letter/digit menu key types into the object search instead of closing the menu.
  if(open&&CheatMenuUI::Typing()&&((openKey>='A'&&openKey<='Z')||(openKey>='0'&&openKey<='9')||openKey==VK_OEM_7||openKey==VK_OEM_MINUS||openKey==VK_BACK))tab=oldTab;
  bool padOpen=NativeUI::PollController(Foreground(),open!=0,CheatMenuUI::OpenButton());if(capturing)padOpen=false;
- if(!Foreground()){if(open||openingRequested)Close();}
+ NativeUI::PauseMouse(ConsoleForeground()||CursorOverConsole());
+ // Controller plugged in or out (and, on the first frame, whether there is one at all).
+ {static int lastPad=-1;int pad=NativeUI::ControllerConnected()?1:0;
+  if(pad!=lastPad){MenuLog(2,pad?"[Input] Controller connected":lastPad<0?"[Input] No controller connected: keyboard and mouse":"[Input] Controller disconnected");lastPad=pad;}}
+ if(!Foreground()){if((open||openingRequested)&&!ConsoleForeground())Close("the game window is no longer active");}
  else {
-  if(!capturing&&((tab&&!oldTab)||padOpen)){if(open||openingRequested||assetWarning)Close();else if(!rt.failed&&backend&&!SupportedBuild())ShowBuildWarning();else if(!rt.failed&&backend){openingTick=GetTickCount();openingRequested=true;backend->SetOpen(2);}}
+  if(!capturing&&((tab&&!oldTab)||padOpen)){
+   char how[56];CheatMenuUI::OpenControlName(!(tab&&!oldTab),how,sizeof(how));
+   if(open||openingRequested||assetWarning){char why[72];wsprintfA(why,"%s pressed",how);Close(why);}
+   else if(!rt.failed&&backend&&!SupportedBuild())ShowBuildWarning();
+   else if(!rt.failed&&backend){lstrcpyA(openedWith,how);openingTick=GetTickCount();openingRequested=true;backend->SetOpen(2);}
+  }
   if(openingRequested){
    TS3CheatSnapshot snap{};DWORD age=DWORD(GetTickCount()-openingTick);
-   if(age>=750)openingRequested=false;
+   // No answer at all: the game isn't running its gameplay update (title screen, loading or a cutscene).
+   if(age>=750){openingRequested=false;MenuLog(2,"[Menu] Not opened: the game did not respond (title screen, loading or a cutscene)");}
    else if(backend&&backend->ReadSnapshot(&snap,sizeof(snap))&&LONG(snap.tick-openingTick)>=0){
     openingRequested=false;
-    if(snap.gameReady){open=true;NativeUI::EndReveal();RECT client={};GetClientRect(rt.window,&client);POINT start={(client.right-client.left)/2,(client.bottom-client.top)/2};if(ClientToScreen(rt.window,&start))SetCursorPos(start.x,start.y);NativeUI::ClearInput();backend->SetOpen(1);CheatMenuUI::Opened(&rt);}
+    // A refusal (snap.gameReady false) is logged by the game side, which knows the reason.
+    if(snap.gameReady){char text[96];wsprintfA(text,"[Menu] Opened with %s",openedWith);MenuLog(2,text);open=true;NativeUI::EndReveal();RECT client={};GetClientRect(rt.window,&client);POINT start={(client.right-client.left)/2,(client.bottom-client.top)/2};if(ClientToScreen(rt.window,&start))SetCursorPos(start.x,start.y);NativeUI::ClearInput();backend->SetOpen(1);CheatMenuUI::Opened(&rt);}
    }
   }
-  if(!capturing&&(open||openingRequested||assetWarning)&&esc&&!oldEscape)Close();
+  if(!capturing&&(open||openingRequested||assetWarning)&&esc&&!oldEscape)Close("Escape pressed");
  }
  oldTab=tab;oldEscape=esc;if(open||WarningVisible()){if(open&&backend)backend->SetOpen(1);Draw();}
  ReleaseSRWLockExclusive(&lock);
@@ -206,19 +276,30 @@ static void BeforePresent(IDXGISwapChain* swap,UINT flags){
 static HRESULT STDMETHODCALLTYPE Present(IDXGISwapChain* s,UINT interval,UINT flags){bool outer=InterlockedIncrement(&presenting)==1;if(outer)BeforePresent(s,flags);HRESULT hr=originalPresent(s,interval,flags);InterlockedDecrement(&presenting);return hr;}
 static HRESULT STDMETHODCALLTYPE Present1(IDXGISwapChain1* s,UINT interval,UINT flags,const DXGI_PRESENT_PARAMETERS* p){bool outer=InterlockedIncrement(&presenting)==1;if(outer)BeforePresent(s,flags);HRESULT hr=originalPresent1(s,interval,flags,p);InterlockedDecrement(&presenting);return hr;}
 static void ResetGraphics(){
- NativeUI::EndReveal();
+ FinishPrepare();NativeUI::EndReveal();
  if(!rt.device)return;
  CheatMenuUI::Reset(&rt);DestroyTexture(&rt,rt.white);ReleaseBuffers();
  for(auto& f:rt.frames){if(f.vertices&&f.mapped)f.vertices->Unmap(0,nullptr);Release(f.vertices);Release(f.allocator);f={};}
- Release(rt.list);Release(rt.pipeline);Release(rt.root);Release(rt.srv);Release(rt.rtv);Release(rt.fence);Release(rt.device);if(rt.event)CloseHandle(rt.event);rt.event=nullptr;rt.ready=false;rt.serial=0;
+ Release(rt.list);Release(rt.pipeline);Release(rt.root);Release(rt.srv);Release(rt.rtv);Release(rt.fence);Release(rt.uploadQueue);Release(rt.uploadFence);Release(rt.device);
+ if(rt.event)CloseHandle(rt.event);if(rt.uploadEvent)CloseHandle(rt.uploadEvent);rt.event=rt.uploadEvent=nullptr;rt.ready=false;rt.serial=rt.uploadSerial=0;
+ warmAt=GetTickCount()+1500|1;   // prepared again once the game has finished changing its display
+}
+// The game's display size for the log, with whether it fills the screen. Logged when it changes.
+static void LogDisplay(HWND window,unsigned width,unsigned height){
+ RECT client;if((!width||!height)&&window&&GetClientRect(window,&client)){width=client.right;height=client.bottom;}
+ static unsigned lastW,lastH;if(!width||!height||(width==lastW&&height==lastH))return;lastW=width;lastH=height;
+ MONITORINFO m;m.cbSize=sizeof(m);RECT r;bool full=false;
+ if(window&&GetWindowRect(window,&r)&&GetMonitorInfoW(MonitorFromWindow(window,MONITOR_DEFAULTTONEAREST),&m))
+  full=r.left<=m.rcMonitor.left&&r.top<=m.rcMonitor.top&&r.right>=m.rcMonitor.right&&r.bottom>=m.rcMonitor.bottom;
+ char text[96];wsprintfA(text,"[Renderer] Game display: %u x %u, %s",width,height,full?"fills the screen":"in a window");MenuLog(2,text);
 }
 // The game is resizing its buffers, so release ours first. They're created again when needed.
 static HRESULT STDMETHODCALLTYPE Resize(IDXGISwapChain* s,UINT count,UINT width,UINT height,DXGI_FORMAT format,UINT flags){
- AcquireSRWLockExclusive(&lock);if((void*)s==(void*)rt.swap){Close();if(!Flush()){rt.failed=true;ReleaseSRWLockExclusive(&lock);return DXGI_ERROR_DEVICE_RESET;}ResetGraphics();}ReleaseSRWLockExclusive(&lock);
+ AcquireSRWLockExclusive(&lock);if((void*)s==(void*)rt.swap){Close("the game changed its display size");LogDisplay(rt.window,width,height);FinishPrepare();if(!Flush()){rt.failed=true;ReleaseSRWLockExclusive(&lock);return DXGI_ERROR_DEVICE_RESET;}ResetGraphics();}ReleaseSRWLockExclusive(&lock);
  HRESULT hr=originalResize(s,count,width,height,format,flags);return hr;
 }
 static HRESULT STDMETHODCALLTYPE Resize1(IDXGISwapChain3* s,UINT count,UINT width,UINT height,DXGI_FORMAT format,UINT flags,const UINT* masks,IUnknown* const* queues){
- AcquireSRWLockExclusive(&lock);if(s==rt.swap){Close();if(!Flush()){rt.failed=true;ReleaseSRWLockExclusive(&lock);return DXGI_ERROR_DEVICE_RESET;}ResetGraphics();}ReleaseSRWLockExclusive(&lock);
+ AcquireSRWLockExclusive(&lock);if(s==rt.swap){Close("the game changed its display size");LogDisplay(rt.window,width,height);FinishPrepare();if(!Flush()){rt.failed=true;ReleaseSRWLockExclusive(&lock);return DXGI_ERROR_DEVICE_RESET;}ResetGraphics();}ReleaseSRWLockExclusive(&lock);
  return originalResize1(s,count,width,height,format,flags,masks,queues);
 }
 static bool Hook(void** table,unsigned slot,void* target,void** original){if(table[slot]==target)return true;if(*original&&*original!=table[slot])return false;DWORD old;if(!VirtualProtect(table+slot,sizeof(void*),PAGE_READWRITE,&old))return false;*original=table[slot];InterlockedExchangePointer(table+slot,target);DWORD unused;VirtualProtect(table+slot,sizeof(void*),old,&unused);return true;}
@@ -229,14 +310,14 @@ static void AttachSwap(IUnknown* device,IDXGISwapChain* swap){
  if(FAILED(swap->QueryInterface(IID_PPV_ARGS(&chain)))){Release(queue);return;}DXGI_SWAP_CHAIN_DESC desc={};chain->GetDesc(&desc);if(!desc.OutputWindow||queue->GetDesc().Type!=D3D12_COMMAND_LIST_TYPE_DIRECT){Release(chain);Release(queue);return;}
  if(rt.swap){
   if(rt.swap==chain||(rt.window!=desc.OutputWindow&&IsWindow(rt.window))){Release(chain);Release(queue);return;}
-  AcquireSRWLockExclusive(&lock);Close();if(!Flush()){rt.failed=true;ReleaseSRWLockExclusive(&lock);Release(chain);Release(queue);return;}ResetGraphics();
+  AcquireSRWLockExclusive(&lock);Close("the game recreated its display");FinishPrepare();if(!Flush()){rt.failed=true;ReleaseSRWLockExclusive(&lock);Release(chain);Release(queue);return;}ResetGraphics();
   if(IsWindow(rt.window)&&(WNDPROC)GetWindowLongPtrW(rt.window,GWLP_WNDPROC)==WindowProc)SetWindowLongPtrW(rt.window,GWLP_WNDPROC,(LONG_PTR)rt.oldProc);
   Release(rt.swap);Release(rt.queue);rt.failed=false;ReleaseSRWLockExclusive(&lock);
  }
 
- rt.swap=chain;rt.queue=queue;rt.window=desc.OutputWindow;rt.oldProc=(WNDPROC)SetWindowLongPtrW(rt.window,GWLP_WNDPROC,(LONG_PTR)WindowProc);
+ rt.swap=chain;rt.queue=queue;rt.window=desc.OutputWindow;rt.oldProc=(WNDPROC)SetWindowLongPtrW(rt.window,GWLP_WNDPROC,(LONG_PTR)WindowProc);LogDisplay(rt.window,desc.BufferDesc.Width,desc.BufferDesc.Height);
  void** vt=*(void***)chain;bool ok=Hook(vt,8,(void*)Present,(void**)&originalPresent)&&Hook(vt,13,(void*)Resize,(void**)&originalResize)&&Hook(vt,22,(void*)Present1,(void**)&originalPresent1)&&Hook(vt,39,(void*)Resize1,(void**)&originalResize1);
- if(!ok){rt.failed=true;Log("Swap-chain hooks unavailable; menu disabled.");}else Log("Game swap chain attached; Tab ready. GPU resources remain unallocated until opened.");
+ if(!ok){rt.failed=true;Log("Swap-chain hooks unavailable; menu disabled.");}else{Log("Game swap chain attached; Tab ready.");warmAt=GetTickCount()+1500|1;}
 }
 static HRESULT STDMETHODCALLTYPE Create(IDXGIFactory* f,IUnknown* d,DXGI_SWAP_CHAIN_DESC* desc,IDXGISwapChain** out){HRESULT hr=originalCreate(f,d,desc,out);if(SUCCEEDED(hr)&&out&&*out)AttachSwap(d,*out);return hr;}
 static HRESULT STDMETHODCALLTYPE CreateHwnd(IDXGIFactory2* f,IUnknown* d,HWND h,const DXGI_SWAP_CHAIN_DESC1* desc,const DXGI_SWAP_CHAIN_FULLSCREEN_DESC* full,IDXGIOutput* restrictOutput,IDXGISwapChain1** out){HRESULT hr=originalCreateHwnd(f,d,h,desc,full,restrictOutput,out);if(SUCCEEDED(hr)&&out&&*out)AttachSwap(d,*out);return hr;}
@@ -244,7 +325,7 @@ static HRESULT STDMETHODCALLTYPE CreateHwnd(IDXGIFactory2* f,IUnknown* d,HWND h,
 // Called by dinput8.dll with the game's DXGI factory. Hooking swap chain creation is how the menu
 // finds the game's swap chain.
 extern "C" __declspec(dllexport) BOOL WINAPI AttachCheatFactory(IUnknown* object,const TS3CheatMenuApi* api){
- using namespace OverlayHost;if(!object||!api||api->version!=TS3MenuApiVersion)return FALSE;backend=api;IDXGIFactory2* factory=nullptr;if(FAILED(object->QueryInterface(IID_PPV_ARGS(&factory))))return FALSE;void** vt=*(void***)factory;
+ using namespace OverlayHost;if(!object||!api||api->version!=TS3MenuApiVersion)return FALSE;backend=api;TraceConsole::Start(api);IDXGIFactory2* factory=nullptr;if(FAILED(object->QueryInterface(IID_PPV_ARGS(&factory))))return FALSE;void** vt=*(void***)factory;
  bool ok=Hook(vt,10,(void*)Create,(void**)&originalCreate)&&Hook(vt,15,(void*)CreateHwnd,(void**)&originalCreateHwnd);factory->Release();Log(ok?"Native menu factory hooks installed.":"Native menu factory hooks failed.");return ok;
 }
 BOOL WINAPI DllMain(HMODULE h,DWORD reason,LPVOID){if(reason==DLL_PROCESS_ATTACH){DisableThreadLibraryCalls(h);OverlayHost::module=h;}return TRUE;}

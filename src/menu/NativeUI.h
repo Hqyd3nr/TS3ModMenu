@@ -34,7 +34,7 @@ namespace NativeUI{
 #ifdef UI_SELF_TEST
  void TestHover(ImVec2);
 #endif
- bool NewFrame(HWND,unsigned,unsigned);void ClearInput();void Shutdown();bool Overflowed();
+ bool NewFrame(HWND,unsigned,unsigned);void PauseMouse(bool);bool ControllerConnected();void ClearInput();void Shutdown();bool Overflowed();
  extern NativeVertex* revealVertices;extern NativeBatch* revealBatches;
  extern unsigned revealVertexCount,revealBatchCount;
  extern unsigned contentVertexCount;void MarkContentEnd();

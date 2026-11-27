@@ -145,7 +145,7 @@ static void Frame(){
   Observe(c);if(!Available(c)){Message(TS3CheatInvalid,"Zurg transformation is unavailable right now.");return;}
   void* manager=*(void**)A(0xb2ef50);int index=PlayerIndex(manager,c.actor);bool back=Active(c);SwitchState* shared=StateFor(c);
   if(back&&!Resolve(shared->original[index])){Message(TS3CheatFault,"The original character is no longer available.");return;}
-  if(enabled)Stop("Flight OFF: character transformation");
+  if(enabled)Stop("[Flight] Turned off for the Zurg transformation");
   if(!back){
    // Re-record when Player > Character switched since the last transformation,
    // so Transform back returns to the character you transformed from.

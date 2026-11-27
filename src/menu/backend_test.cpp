@@ -26,8 +26,8 @@ static void Log(const char*,...){}
 static bool requestedFlightPose;static unsigned flightStarts;
 static void Start(void*,bool animate=true,bool=false){enabled=true;requestedFlightPose=animate;++flightStarts;}
 static void StartFlight(void* a){Start(a);}
-static void* Mount(void*){return 0;}
-static void Stop(const char*){enabled=false;}
+static void* Mount(void*){return 0;}static bool Driving(void*){return false;}
+static bool travelHold;static void Stop(const char*,unsigned=0){enabled=false;}
 static void Place(void*){}
 static bool Same(void*){return true;}
 static void Commit(void*){}
@@ -35,7 +35,9 @@ static Vec Direction(void*){return {0,0,1};}
 typedef void*(*RewardPropertyFn)(void*,int,const char*);
 typedef const char*(*RewardValueFn)(void*,int);
 static bool RewardWorldIsToyBox(void*,RewardPropertyFn,RewardValueFn){return true;}
-namespace MenuInputGate{static bool external;static void SetExternalMenu(bool v){external=v;}static void InitializeExternal(){}}
+static const char* RewardWorldProperty(void*,int,const char*,RewardPropertyFn,RewardValueFn){return "st_daycare";}
+namespace MenuInputGate{static bool external;static void SetExternalMenu(bool v){external=v;}static void InitializeExternal(){}static bool hooksReady=true;static volatile LONG gameplayTick;static bool ConsoleOpen(){return false;}}
+#include "../backend/ModDiagnostics.h"
 #include "../backend/ModMenuBridge.cpp"
 static unsigned tests,failures;
 static void CheckAt(bool v,unsigned line){++tests;if(!v){++failures;char b[96];DWORD n;int len=wsprintfA(b,"FAILED line %u (check %u)\r\n",line,tests);WriteFile(GetStdHandle(STD_OUTPUT_HANDLE),b,len,&n,0);}}
@@ -92,6 +94,13 @@ static int RaceTestNative(void*,float delta){timerTestDelta=delta;++timerCalls;r
 extern "C" void TestEntry(){
  TestZurgHud();
  using namespace CheatMenuBridge;
+ // Session log level names: the game's world file becomes a level name, the file kept beside it.
+ {char w[80];LogNames::World("st_daycare",false,w);Check(lstrcmpA(w,"Sunnyside Daycare (st_daycare)")==0);
+  LogNames::World("worlds/ST_Junkyard.zip",false,w);Check(lstrcmpA(w,"Junkyard (st_junkyard)")==0);
+  LogNames::World("westerntown",true,w);Check(lstrcmpA(w,"Toy Box (westerntown)")==0);
+  LogNames::World(0,true,w);Check(lstrcmpA(w,"Toy Box")==0);LogNames::World("st_newlevel",false,w);Check(lstrcmpA(w,"st_newlevel")==0);
+  LogNames::World(0,false,w);Check(lstrcmpA(w,"unknown world")==0);
+  LogNames::Npc(1|(6<<8),w);Check(lstrcmpA(w,"Alien, Zombie")==0);LogNames::Npc(7|(5<<8),w);Check(lstrcmpA(w,"Hamm")==0);LogNames::Npc(2,w);Check(lstrcmpA(w,"Fairy")==0);}
  BYTE aiControl[0xc0]={},aiRoot[0x80]={},aiEvaluator[0x28]={},aiVm[0x80]={};void* aiOwner=(void*)0x1234;
  At<void*>(aiControl,0)=(void*)A(0x804818);At<void*>(aiControl,8)=aiOwner;At<void*>(aiControl,0x38)=aiRoot;
  At<void*>(aiRoot,0)=(void*)A(0x800fc8);At<void*>(aiRoot,0x20)=aiControl;At<void*>(aiRoot,0x68)=aiEvaluator;

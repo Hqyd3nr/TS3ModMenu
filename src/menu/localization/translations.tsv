@@ -5,7 +5,8 @@ Light|Claro|Clair|Hell|Chiaro
 Dark|Oscuro|Sombre|Dunkel|Scuro
 Settings|Ajustes|Paramètres|Einstellungen|Impostazioni
 APPEARANCE|APARIENCIA|APPARENCE|DARSTELLUNG|ASPETTO
-ABOUT & CREDITS|ACERCA DE Y CRÉDITOS|À PROPOS ET CRÉDITS|INFO UND MITWIRKENDE|INFO E RICONOSCIMENTI
+ABOUT|ACERCA DE|À PROPOS|INFO|INFORMAZIONI
+Credits|Créditos|Crédits|Mitwirkende|Riconoscimenti
 Created by Hqyd3nr|Creado por Hqyd3nr|Créé par Hqyd3nr|Erstellt von Hqyd3nr|Creato da Hqyd3nr
 Version %s|Versión %s|Version %s|Version %s|Versione %s
 Creator, feature direction and interface design.|Creación, dirección de funciones y diseño de interfaz.|Création, conception des fonctions et de l'interface.|Entwicklung, Funktionsplanung und Oberflächendesign.|Creazione, progettazione delle funzioni e dell'interfaccia.
@@ -13,6 +14,8 @@ Menu artwork|Ilustraciones del menú|Illustrations du menu|Menügrafiken|Grafica
 Object icons and robot, Fairy and Gargoyle portraits.|Iconos de objetos y retratos de robots, hadas y gárgolas.|Icônes d'objets et portraits de robots, fées et gargouilles.|Objektsymbole sowie Roboter-, Feen- und Gargoyle-Porträts.|Icone degli oggetti e ritratti di robot, fate e gargoyle.
 Game artwork|Ilustraciones del juego|Graphismes du jeu|Spielgrafiken|Grafica del gioco
 Interface inspiration|Inspiración de la interfaz|Inspiration de l'interface|Inspiration der Oberfläche|Ispirazione dell'interfaccia
+Team|Equipo|Équipe|Team|Squadra
+Community support and beta testing.|Ayuda a la comunidad y pruebas beta.|Aide à la communauté et tests bêta.|Community-Support und Betatests.|Supporto alla community e beta test.
 Fonts|Fuentes|Polices|Schriftarten|Caratteri
 Mods|Mods|Mods|Mods|Mod
 Mod menu|Menú de mods|Menu de mods|Mod-Menü|Menu mod
@@ -488,3 +491,4 @@ D-pad Left|Cruceta izquierda|Croix gauche|Steuerkreuz links|Croce sinistra
 D-pad Right|Cruceta derecha|Croix droite|Steuerkreuz rechts|Croce destra
 This button can't be used.|Este botón no se puede usar.|Ce bouton est indisponible.|Diese Taste geht nicht.|Pulsante non utilizzabile.
 Zurg is only available in the main Toy Box world and Story Mode.|Zurg solo está disponible en el mundo principal de la Caja de juguetes y en el Modo Historia.|Zurg n'est disponible que dans le monde principal du Coffre à jouets et en Mode Histoire.|Zurg ist nur in der Hauptwelt der Spielzeugkiste und im Story-Modus verfügbar.|Zurg è disponibile solo nel mondo principale della Scatola dei giocattoli e in Modalità Storia.
+Not available while driving.|No disponible mientras conduces.|Indisponible pendant la conduite.|Beim Fahren nicht verfügbar.|Non disponibile durante la guida.

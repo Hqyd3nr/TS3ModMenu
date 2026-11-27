@@ -30,7 +30,12 @@ static void Copy(void* to,const void* from,SIZE_T bytes){
 // it counts as closed.
 static bool Open(){return openFlag&&(DWORD)(GetTickCount()-(DWORD)openTick)<750;}
 static void SetOpen(uint32_t open){
- if(open==2){InterlockedExchange(&probeTick,(LONG)GetTickCount());InterlockedExchange(&probeRequested,1);return;}
+ // Log opening and closing once per change; SetOpen(1) repeats every frame while the menu is open.
+ if(open!=2&&LONG(open!=0)!=Diagnostics::menuOpen){
+  InterlockedExchange(&Diagnostics::menuOpen,open!=0);
+  if(open)InterlockedExchange(&Diagnostics::menuOpened,1);   // the menu logs "Opened with ..." / "Closed: ..." itself
+ }
+ if(open==2){Diagnostics::Write(Diagnostics::Trace,"[Menu] Open requested; checking gameplay first");InterlockedExchange(&probeTick,(LONG)GetTickCount());InterlockedExchange(&probeRequested,1);return;}
  if(open){InterlockedExchange(&openTick,(LONG)GetTickCount());InterlockedExchange(&openFlag,1);}
  else InterlockedExchange(&openFlag,0);
  MenuInputGate::SetExternalMenu(open!=0||travelInput);
@@ -75,7 +80,17 @@ static bool NativeMenuOpen(){
 }
 // Copies the save file to Mod Menu/Backups and checks the copy byte for byte, with a README on
 // how to restore it. Coins, Pixar Balls and weapons are only added after this succeeds.
+static WCHAR backupName[96];   // folder name of the last backup, for the log
+static bool WriteBackup(const Context& c,DWORD id,int kind,unsigned int amount,const char* weapon);
+// Makes a verified copy of the save before currency or a weapon is added, and logs whether it worked.
 static bool BackupCurrency(const Context& c,DWORD id,int kind,unsigned int amount,const char* weapon=0){
+ backupName[0]=0;bool ok=WriteBackup(c,id,kind,amount,weapon);char name[96];WideCharToMultiByte(CP_UTF8,0,backupName,-1,name,96,0,0);
+ char text[200];
+ if(ok)wsprintfA(text,"[Backup] Save copied and verified: Mod Menu\\Backups\\%s",name);
+ else wsprintfA(text,"[Backup] Save backup failed%s%s; nothing was changed",name[0]?" in ":"",name);
+ Diagnostics::Write(ok?Diagnostics::Success:Diagnostics::Error,text);return ok;
+}
+static bool WriteBackup(const Context& c,DWORD id,int kind,unsigned int amount,const char* weapon){
  // Only on an explicit currency or weapon command, never while hidden or on a timer.
  WCHAR source[MAX_PATH],folder[MAX_PATH],saved[MAX_PATH],readme[MAX_PATH];
  DWORD n=GetEnvironmentVariableW(L"APPDATA",source,MAX_PATH);
@@ -88,7 +103,7 @@ static bool BackupCurrency(const Context& c,DWORD id,int kind,unsigned int amoun
  if(!CreateDirectoryW(folder,0)&&GetLastError()!=ERROR_ALREADY_EXISTS)return false;
  SYSTEMTIME time;GetSystemTime(&time);WCHAR suffix[96];
  wsprintfW(suffix,L"\\%04u%02u%02uT%02u%02u%02uZ-slot%u-cheat-change-%lu-%lu",time.wYear,time.wMonth,time.wDay,time.wHour,time.wMinute,time.wSecond,c.slot+1,GetTickCount(),id);
- lstrcatW(folder,suffix);if(!CreateDirectoryW(folder,0))return false;
+ lstrcatW(folder,suffix);lstrcpynW(backupName,suffix+1,96);if(!CreateDirectoryW(folder,0))return false;
  lstrcpyW(saved,folder);lstrcatW(saved,L"\\Saved Game");lstrcpyW(readme,folder);lstrcatW(readme,L"\\README.txt");
  HANDLE input=CreateFileW(source,GENERIC_READ,FILE_SHARE_READ,0,OPEN_EXISTING,FILE_FLAG_SEQUENTIAL_SCAN,0);
  if(input==INVALID_HANDLE_VALUE)return false;
@@ -139,7 +154,41 @@ static bool ReadContext(void* actor,Context& c){
   return true;
  }__except(EXCEPTION_EXECUTE_HANDLER){return false;}
 }
-static void Message(TS3CheatResult r,const char* text){result=r;statusTick=GetTickCount();lstrcpynA(status,text,128);}
+// Category of the action being run, used as the [Tag] of its log lines.
+static const char* category="Menu";
+// Every result shown in the menu also goes to the session log, tagged with the action's category.
+// "Doing something..." messages are progress (INFO); SUCCESS is only for finished actions.
+static void Message(TS3CheatResult r,const char* text){
+ result=r;statusTick=GetTickCount();lstrcpynA(status,text,128);
+ int n=lstrlenA(text);bool progress=n>=3&&text[n-1]=='.'&&text[n-2]=='.'&&text[n-3]=='.';
+ unsigned level=r==TS3CheatOk?(progress?Diagnostics::Info:Diagnostics::Success):r==TS3CheatFault?Diagnostics::Error:Diagnostics::Warning;
+ char line[200];wsprintfA(line,"[%s] %s",category,text);Diagnostics::Write(level,line);
+}
+static const char* Category(uint32_t action){
+ switch(action){
+ case TS3CheatFlightToggle:case TS3CheatFlightSpeed:return "Flight";
+ case TS3CheatRememberPosition:case TS3CheatReturnPosition:case TS3CheatClearPosition:case TS3CheatTeleportPlace:return "Teleport";
+ case TS3CheatAddCoins:case TS3CheatAddPixar:return "Currency";
+ case TS3CheatGodToggle:return "Player";
+ case TS3CheatSpawnObject:case TS3CheatClearObjects:return "Objects";
+ case TS3CheatSuperSpeed:case TS3CheatSuperJump:case TS3CheatRunMultiplier:case TS3CheatJumpMultiplier:return "Movement";
+ case TS3CheatEquipWeapon:case TS3CheatBuzzLaser:return "Weapons";
+ case TS3CheatSpawnNpc:case TS3CheatClearNpcs:return "NPCs";
+ case TS3CheatZurgTransform:return "Zurg";
+ case TS3CheatSwitchCharacter:return "Character";
+ case TS3CheatFreezeTimers:return "Timers";
+ case TS3CheatSpawnVehicle:case TS3CheatClearVehicles:return "Vehicles";
+ case TS3CheatWorldSky:return "World";
+ default:return "Menu";
+ }
+}
+static const char* ActionName(uint32_t action){
+ static const char* const names[]={"none","Flight toggle","Flight speed","Save position","Return to position","Add coins","Add Pixar Balls","God mode","Spawn object","Clear objects",
+  "Walk speed toggle","Jump height toggle","Equip weapon","Spawn NPC","Clear NPCs","Zurg transformation","Freeze timers","Spawn vehicle","Change sky","Walk speed",
+  "Jump height","Clear position","Clear vehicles","Teleport to place","Buzz's laser","Switch character"};
+ return action<sizeof(names)/sizeof(names[0])?names[action]:"unknown";
+}
+#include "ModLogNames.h"
 static void ExtrasFrame();
 #include "ModRegionTeleport.h"
 #include "ModPlayerObjects.h"
@@ -174,7 +223,29 @@ static bool UpdatePendingCurrency(bool valid,const Context& c,DWORD now=GetTickC
 }
 // Runs one command on the game thread. Only one action that changes the world can run at a time.
 static void Execute(const TS3CheatCommand& command,const Context& c){
+ // What was asked for, with its value, so a log can be followed step by step.
+ {category=Category(command.action);char detail[72],name[56];detail[0]=0;int tenths=int(command.value*10+.5f);
+  switch(command.action){
+  case TS3CheatFlightSpeed:wsprintfA(detail," (speed %d)",int(command.value+.5f));break;
+  case TS3CheatAddCoins:case TS3CheatAddPixar:wsprintfA(detail," (%u)",command.amount);break;
+  case TS3CheatRunMultiplier:case TS3CheatJumpMultiplier:wsprintfA(detail," (x%d.%d)",tenths/10,tenths%10);break;
+  case TS3CheatSwitchCharacter:wsprintfA(detail," (%s)",command.amount==0?"Woody":command.amount==1?"Buzz":command.amount==2?"Jessie":"?");break;
+  case TS3CheatRememberPosition:case TS3CheatReturnPosition:case TS3CheatClearPosition:wsprintfA(detail," (slot %u)",command.amount+1);break;
+  case TS3CheatSpawnNpc:if(TS3ValidNpcSelection(command.amount))LogNames::Npc(command.amount,name);else lstrcpyA(name,"?");wsprintfA(detail," (%s)",name);break;
+  case TS3CheatSpawnObject:wsprintfA(detail," (%s)",command.amount<TS3ObjectCount?LogNames::objects[command.amount]:"?");break;
+  case TS3CheatEquipWeapon:wsprintfA(detail," (%s)",command.amount<9?LogNames::weapons[command.amount]:"?");break;
+  case TS3CheatSpawnVehicle:wsprintfA(detail," (%s)",command.amount<TS3VehicleCount?LogNames::vehicles[command.amount]:"?");break;
+  case TS3CheatWorldSky:wsprintfA(detail," (%s)",command.amount<4?LogNames::skies[command.amount]:"?");break;
+  case TS3CheatTeleportPlace:wsprintfA(detail," (%s)",command.amount<TS3PlaceCount?LogNames::places[command.amount]:"?");break;
+  }
+  char text[160];wsprintfA(text,"[%s] Requested: %s%s",category,ActionName(command.action),detail);Diagnostics::Write(Diagnostics::Debug,text);
+  Diagnostics::Action(text+lstrlenA(category)+3);}
  if(RegionTeleport::Active()||PlayerObjects::spawnPending||WorldNpcs::pending||ZurgTransform::pending||CharacterSwitch::pending||VehiclesWorld::pending||VehiclesWorld::skyPending){Message(TS3CheatBusy,"Wait for the current action to finish.");return;}
+ // Flight, Walk speed and Jump height are for walking and mounts, not cars (flying or faster cars: a 1.3.0 idea).
+ // Turning them off or back to normal is always allowed.
+ bool raising=(command.action==TS3CheatFlightToggle&&!enabled)||(command.action==TS3CheatSuperSpeed&&!MovementWeapons::fast)||
+  (command.action==TS3CheatSuperJump&&!MovementWeapons::jump)||((command.action==TS3CheatRunMultiplier||command.action==TS3CheatJumpMultiplier)&&command.value!=1);
+ if(raising&&Driving(c.actor)){Message(TS3CheatInvalid,"Not available while driving.");return;}
  __try{
   switch(command.action){
   case TS3CheatClearVehicles:VehiclesWorld::Request(c,0xffffffffU,false);break;
@@ -201,7 +272,7 @@ static void Execute(const TS3CheatCommand& command,const Context& c){
   case TS3CheatGodToggle:PlayerObjects::Toggle(c);break;
   case TS3CheatSpawnObject:PlayerObjects::Request(c,command.amount);break;
   case TS3CheatFlightToggle:
-   if(enabled)Stop("Flight OFF: cheat menu");else StartFlight(c.actor);
+   if(enabled)Stop("[Flight] Turned off from the menu");else StartFlight(c.actor);
    Message(TS3CheatOk,enabled?"Flight / noclip enabled.":"Flight / noclip disabled.");break;
   case TS3CheatFlightSpeed:
    if(!enabled){Message(TS3CheatInvalid,"Enable flight to adjust its speed.");break;}
@@ -233,10 +304,34 @@ static void Execute(const TS3CheatCommand& command,const Context& c){
  }__except(EXCEPTION_EXECUTE_HANDLER){Message(TS3CheatFault,"Game state changed; command stopped. Do not repeat a partial currency award.");}
 }
 // Called every frame from the player's actor update.
+// For crash reports: what the menu had switched on. Called from the crash handler, so it only reads.
+static void DescribeFeatures(char* out,int size){
+ char text[512];int n=0;text[0]=0;
+ auto add=[&](const char* part){if(n+lstrlenA(part)+3<int(sizeof(text))){if(n){lstrcatA(text,", ");n+=2;}lstrcatA(text,part);n+=lstrlenA(part);}};
+ if(enabled){char t[48];wsprintfA(t,"flight (speed %d)",int(speed));add(t);}
+ if(MovementWeapons::fast){char t[48];wsprintfA(t,"Walk speed x%d.%d",int(MovementWeapons::runMultiplier),int(MovementWeapons::runMultiplier*10)%10);add(t);}
+ if(MovementWeapons::jump){char t[48];wsprintfA(t,"Jump height x%d.%d",int(MovementWeapons::jumpMultiplier),int(MovementWeapons::jumpMultiplier*10)%10);add(t);}
+ if(PlayerObjects::god)add("God mode");if(ChallengeTimers::frozen)add("timers frozen");if(ZurgTransform::menuZurg)add("playing as Zurg");
+ if(pendingKind>=0)add("currency pickup pending");
+ if(!n)add("none");lstrcpynA(out,text,size);
+}
+// In gameplay: the player is in control and no game menu is open. Only asked while the Trace Console is open.
+static bool PlayingNow(void* actor){__try{return actor&&actor==Player()&&!NativeMenuOpen();}__except(EXCEPTION_EXECUTE_HANDLER){return false;}}
+// Why the menu can't open right now, for the session log. Same checks as ReadContext, in order.
+static const char* NotReadyReason(void* actor){
+ __try{
+  if(!actor||actor!=Player())return "no player in control yet (title screen, loading or a cutscene)";
+  BYTE* save=*(BYTE**)A(0xb29a60);void* wm=*(void**)A(0xb2c760);
+  if(!save||!*(void**)(save+0x1a0)||!wm)return "no save is loaded yet";
+  if(NativeMenuOpen())return "a game menu is open (pause, shop or quest)";
+ }__except(EXCEPTION_EXECUTE_HANDLER){}
+ return "the game is loading or changing area";
+}
 static void Tick(void* actor){
  // Tab requests a single game-thread validation without opening or blocking input.
  if(InterlockedExchange(&probeRequested,0)&&DWORD(GetTickCount()-(DWORD)probeTick)<750){
   Context probeContext;bool valid=ReadContext(actor,probeContext);
+  if(!valid){char text[128];wsprintfA(text,"[Menu] Not opened: %s",NotReadyReason(actor));Diagnostics::Write(Diagnostics::Info,text);}
   TS3CheatSnapshot probe;for(unsigned i=0;i<sizeof(probe);++i)((volatile BYTE*)&probe)[i]=0;ReadSnapshot(&probe,sizeof(probe));probe.version=TS3MenuApiVersion;probe.tick=GetTickCount();probe.gameReady=valid;
   probe.toyBox=valid&&probeContext.toyBox;probe.currencyReady=valid&&probeContext.currency;probe.coins=probeContext.coins;probe.pixar=probeContext.pixar;probe.movementReady=MovementWeapons::ready;
   probe.slot=valid?probeContext.slot:-1;
@@ -254,16 +349,39 @@ static void Tick(void* actor){
   else InterlockedExchange(&probeRequested,1);
  }
 
- // One cheap lease/queue check while closed; no files, threads or world scans.
+ // Every feature checks the game code and installs on the first gameplay frame (it took about 8 ms), so the
+ // first Tab only opens the menu. After that, one cheap lease/queue check while closed; no files, threads or
+ // world scans.
+ if(module&&!inputInitialized){MenuInputGate::InitializeExternal();inputInitialized=true;}   // Ctrl+Backspace (Trace Console) must not reach the game before any Tab
+ if(module&&!codeChecked){codeReady=CheckCode();RegionTeleport::Install();PlayerObjects::Install();MovementWeapons::Install();ZurgTransform::Install();ChallengeTimers::Install();ZurgHud::Install();VehiclesWorld::Install();codeChecked=true;}
+ if(codeChecked&&!Diagnostics::describe){
+  Diagnostics::describe=DescribeFeatures;
+  // Each feature checks the game code it needs before hooking anything. One line when all of them found it;
+  // otherwise one warning naming the menu features that stay off (named as on the menu pages).
+  struct {const char* name;bool ready;} parts[]={{"Currency",codeReady},{"Teleport and spawning",RegionTeleport::hookReady},{"Objects and God mode",PlayerObjects::ready},
+   {"Walk speed, Jump height and Weapons",MovementWeapons::ready},{"Zurg",ZurgTransform::ready},{"Freeze timers",ChallengeTimers::ready},
+   {"Zurg's health bar in Story Mode",ZurgHud::ready},{"Vehicles and Sky",VehiclesWorld::ready}};
+  char off[256];off[0]=0;for(auto& part:parts)if(!part.ready){if(off[0])lstrcatA(off,", ");lstrcatA(off,part.name);}
+  if(!off[0])Diagnostics::Write(Diagnostics::Success,"[Startup] All menu features are ready");
+  else{char text[320];wsprintfA(text,"[Startup] Turned off because this copy of the game is different: %s",off);Diagnostics::Write(Diagnostics::Warning,text);}
+  if(!MenuInputGate::hooksReady)Diagnostics::Write(Diagnostics::Warning,"[Startup] The game may still react to keys and the mouse while the menu is open");
+ }
+ if(MenuInputGate::ConsoleOpen()&&PlayingNow(actor))InterlockedExchange(&MenuInputGate::gameplayTick,(LONG)GetTickCount());
  if(!Open()&&queueState!=2&&pendingKind<0&&!PlayerObjects::god&&!PlayerObjects::spawnPending&&!WorldNpcs::pending&&!ChallengeTimers::frozen)return;
  DWORD now=GetTickCount();if(queueState!=2&&(DWORD)(now-lastPublish)<100)return;
  if(!module)return;
  if(Open()&&!inputInitialized){MenuInputGate::InitializeExternal();inputInitialized=true;}
- if(!codeChecked){codeReady=CheckCode();RegionTeleport::Install();PlayerObjects::Install();MovementWeapons::Install();ZurgTransform::Install();ChallengeTimers::Install();ZurgHud::Install();VehiclesWorld::Install();codeChecked=true;}
  Context c;bool valid=ReadContext(actor,c);RegionTeleport::Observe(c,valid);PlayerObjects::Protect(c,valid);PlayerObjects::Observe(c,valid);WorldNpcs::Observe(c,valid);if(valid){ZurgTransform::Observe(c);CharacterSwitch::Observe(c);}
  ChallengeTimers::Observe(c,valid);
  bool same=valid&&c.actor==previous.actor&&c.handle==previous.handle&&c.world==previous.world&&c.slot==previous.slot&&c.worldManager==previous.worldManager&&c.saveData==previous.saveData;
- if(!same){++contextId;if(!contextId)++contextId;Copy(&previous,&c,sizeof(c));}
+ if(!same){++contextId;if(!contextId)++contextId;Copy(&previous,&c,sizeof(c));
+  // The level by name, with the game's own world file and number kept for anyone reading the log closely.
+  if(valid){char where[80],text[160];const char* file=0;
+   __try{file=RewardWorldProperty(At<void*>(c.worldManager,0x3088),c.world,"filename",(RewardPropertyFn)A(0x476ef0),(RewardValueFn)A(0x477200));}__except(EXCEPTION_EXECUTE_HANDLER){file=0;}
+   LogNames::World(file,c.toyBox,where);
+   wsprintfA(text,"[Game] In gameplay: %s, world %d, save slot %d, %s",where,c.world,c.slot+1,c.toyBox?"Toy Box":"Story Mode");Diagnostics::Write(Diagnostics::Info,text);}
+  else Diagnostics::Write(Diagnostics::Debug,"[Game] Left gameplay (menu, cutscene or loading screen)");
+ }
  if(UpdatePendingCurrency(valid,c))Message(TS3CheatPartial,"Award not fully confirmed. Adding is available again; no extra currency was granted.");
  if(queueState==2){
   TS3CheatCommand command;Copy(&command,&queued,sizeof(command));
@@ -302,8 +420,14 @@ static void Tick(void* actor){
  snap.lastCommandId=lastCommandId;snap.result=result;if(StatusVisible(GetTickCount()))lstrcpynA(snap.status,status,128);
  if(!InterlockedCompareExchange(&snapshotBusy,1,0)){Copy(&published,&snap,sizeof(snap));InterlockedExchange(&snapshotBusy,0);lastPublish=now;}
 }
-// What TS3ModMenu.dll gets from GetCheatMenuApi: these three calls and nothing else.
-static const TS3CheatMenuApi api={TS3MenuApiVersion,sizeof(TS3CheatMenuApi),SetOpen,ReadSnapshot,Submit};
+// What TS3ModMenu.dll gets from GetCheatMenuApi: these calls and nothing else.
+static void LogFromMenu(uint32_t level,const char* text){Diagnostics::Write(level,text);}
+static uint32_t ReadLogLines(uint32_t first,TS3LogLine* out,uint32_t max){static_assert(sizeof(TS3LogLine)==sizeof(Diagnostics::Line),"log line layout");return Diagnostics::Read(first,(Diagnostics::Line*)out,max);}
+static const TS3CheatMenuApi api={TS3MenuApiVersion,sizeof(TS3CheatMenuApi),SetOpen,ReadSnapshot,Submit,LogFromMenu,ReadLogLines};
 }
-extern "C" __declspec(dllexport) const TS3CheatMenuApi* GetCheatMenuApi(uint32_t version){return version==TS3MenuApiVersion?&CheatMenuBridge::api:0;}
+extern "C" __declspec(dllexport) const TS3CheatMenuApi* GetCheatMenuApi(uint32_t version){
+ if(version!=TS3MenuApiVersion){Diagnostics::Write(Diagnostics::Error,"[Startup] TS3ModMenu.dll and dinput8.dll are from different versions; menu disabled");return 0;}
+ if(!InterlockedExchange(&Diagnostics::menuAttached,1))Diagnostics::Write(Diagnostics::Success,"[Startup] TS3ModMenu.dll connected");   // asked for more than once; logged once
+ return &CheatMenuBridge::api;
+}
 

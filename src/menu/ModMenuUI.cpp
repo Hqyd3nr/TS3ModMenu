@@ -684,7 +684,9 @@ static void SettingsDrawer(){
  float baseOy=oy;ImVec2 mouse=ImGui::GetIO().MousePos;
  // Controls card: 6 controller rows or 5 keyboard rows; everything below follows it.
  const bool usingPad=NativeUI::ControllerActive()||capture==2;const float cardH=usingPad?344.f:312.f,shift=cardH-344.f;
- float creditEnd=Paragraph(x+36,943+shift,"Creator, feature direction and interface design.",338,false)+48;
+ // Keep in step with the drawing below: Team (two members), then Credits: Menu artwork and three one-line credits.
+ float creditEnd=Paragraph(x+36,973+shift,"Creator, feature direction and interface design.",338,false)+12;
+ creditEnd=Paragraph(x+36,creditEnd+30,"Community support and beta testing.",338,false)+18+36+30;
  creditEnd=Paragraph(x+36,creditEnd,"Robot, Fairy and Gargoyle portraits, cut out from game scenes.",338,false)+18+76+76+58;
  const float maxScroll=Max(0.f,creditEnd+24-672);
  settingsScroll=Max(0.f,Min(settingsScroll,maxScroll));
@@ -750,12 +752,14 @@ static void SettingsDrawer(){
   const char* what[]={"Open / close menu","Close menu","Select","Adjust slider","Scroll"};
   for(int i=0;i<5;++i){Text(x+36,543+32.f*i,keys[i],Nunito18,muted,124);Text(x+168,543+32.f*i,what[i],Nunito18,ink,216);}
  }
- Text(x+24,766+shift,"ABOUT & CREDITS",Lilita30,ink,362);
+ Text(x+24,766+shift,"ABOUT",Lilita30,ink,362);
  Box(x+20,811+shift,380,creditEnd-811-shift,paper,10);Border(x+20,811+shift,380,creditEnd-811-shift);
  Text(x+36,829+shift,"Toy Story 3 Mod Menu",Nunito22,ink,344);
  char version[64];wsprintfA(version,Localization::Get("Version %s"),TS3_MENU_VERSION);Text(x+36,861+shift,version,Nunito18,muted);
- Text(x+36,907+shift,"Created by Hqyd3nr",Nunito22,ink,344);
- float cy=Paragraph(x+36,943+shift,"Creator, feature direction and interface design.",338)+18;
+ Text(x+36,907+shift,"Team",Nunito22,ink,344);
+ Text(x+36,943+shift,"Hqyd3nr",Nunito18,ink);float cy=Paragraph(x+36,973+shift,"Creator, feature direction and interface design.",338)+12;
+ Text(x+36,cy,"RichiePlayz2593",Nunito18,ink);cy=Paragraph(x+36,cy+30,"Community support and beta testing.",338)+18;
+ Text(x+36,cy,"Credits",Nunito22,ink,344);cy+=36;
  Text(x+36,cy,"Menu artwork",Nunito18,ink);cy=Paragraph(x+36,cy+30,"Robot, Fairy and Gargoyle portraits, cut out from game scenes.",338)+18;
  Text(x+36,cy,"Game artwork",Nunito18,ink);Text(x+36,cy+30,"Disney / Pixar & Avalanche",Nunito18,muted);cy+=76;
  Text(x+36,cy,"Interface inspiration",Nunito18,ink);Text(x+36,cy+30,"Toy Story 3 Companion",Nunito18,muted);cy+=76;
@@ -788,7 +792,11 @@ static void Gear(float x,float y){
  for(int i=0;i<4;++i){const float dx[]={1,0,.707107f,.707107f},dy[]={0,1,.707107f,-.707107f};draw->AddLine(P(x-dx[i]*12,y-dy[i]*12),P(x+dx[i]*12,y+dy[i]*12),muted,5*scale);}
  draw->AddCircleFilled(P(x,y),9*scale,muted);draw->AddCircleFilled(P(x,y),4*scale,paper);
 }
-void Opened(OverlayHost::Runtime*){capture=0;NativeUI::PadCapture(false);themeSeen=false;for(auto& m:motions)m={};pending=0;closeAfterPictomaticAdd=false;localMessage[0]=0;titleDragging=false;}
+void Preload(OverlayHost::Runtime* runtime){Assets(runtime);}
+// When the game last reported gameplay. A report that is only late because of one long frame (the game
+// was busy, not in a loading screen) keeps the last good state for up to 3 s instead of closing the menu.
+static DWORD readyTick;
+void Opened(OverlayHost::Runtime*){readyTick=GetTickCount();capture=0;NativeUI::PadCapture(false);themeSeen=false;for(auto& m:motions)m={};pending=0;closeAfterPictomaticAdd=false;localMessage[0]=0;titleDragging=false;}
 void Closed(OverlayHost::Runtime*){titleDragging=false;capture=0;NativeUI::PadCapture(false);}
 static void LoadPreferences(){
  if(prefsLoaded)return;prefsLoaded=true;if(!prefsStore)return;
@@ -805,6 +813,11 @@ static void LoadPreferences(){
  openButton=button>0&&button<0x10000&&PadIndex(WORD(button))>=0?WORD(button):WORD(1);
 }
 int OpenKey(){LoadPreferences();return openKey;}
+// The open key or button by name, in English, for the session log ("Tab key", "D-pad Up").
+void OpenControlName(bool pad,char* out,int size){
+ LoadPreferences();if(pad){int i=PadIndex(openButton);lstrcpynA(out,i>=0?padNames[i]:"controller button",size);return;}
+ char key[48];KeyName(openKey,key,48);wsprintfA(out,"%.40s key",key);
+}
 bool Typing(){return searchFocused&&page==3&&!settingsOpen&&!NativeUI::ControllerActive();}
 WORD OpenButton(){LoadPreferences();return openButton;}
 bool Capturing(){return capture!=0;}
@@ -842,21 +855,24 @@ void Draw(OverlayHost::Runtime* runtime){
  UpdateTheme();UpdateSettings();
  Assets(runtime);
  const TS3CheatMenuApi* api=OverlayHost::Backend();TS3CheatSnapshot next{};
- if(api&&api->ReadSnapshot(&next,sizeof(next))){
+ bool got=api&&api->ReadSnapshot(&next,sizeof(next));
+ bool late=got&&!next.gameReady&&DWORD(GetTickCount()-next.tick)>1500&&DWORD(GetTickCount()-readyTick)<3000;
+ if(got&&!late){
   state=next;
   appliedSky=state.skyReady&&state.activeSky>=0&&state.activeSky<4?state.activeSky:-1;
   if(pending&&state.lastCommandId>=pending){
    // Close once for this accepted travel command, never for a stale snapshot
    // seen when the user opens the menu again after a transition.
    // Zurg and Player > Character switch in place: the menu stays open for them.
-   if(state.teleportPending&&pendingAction!=TS3CheatZurgTransform&&pendingAction!=TS3CheatSwitchCharacter)OverlayHost::Close();
+   if(state.teleportPending&&pendingAction!=TS3CheatZurgTransform&&pendingAction!=TS3CheatSwitchCharacter)OverlayHost::Close("teleporting");
    bool closePictomatic=closeAfterPictomaticAdd&&state.lastCommandId==pending&&state.result==TS3CheatOk;
    pending=0;closeAfterPictomaticAdd=false;
-   if(closePictomatic){OverlayHost::Close();return;}
+   if(closePictomatic){OverlayHost::Close("Pict-O-Matic added");return;}
   }
  }
- else state.gameReady=state.currencyReady=state.savedPosition=0;
- if(!state.gameReady){OverlayHost::Close();return;}
+ else if(!got)state.gameReady=state.currencyReady=state.savedPosition=0;
+ if(state.gameReady)readyTick=GetTickCount();
+ if(!state.gameReady){OverlayHost::Close("gameplay ended (loading, cutscene or a game menu)");return;}
  if(!assetsReady){OverlayHost::ShowAssetWarning();DrawAssetWarning(runtime);return;}
  // Desktop layout uses full-size controls rather than shrinking the old cards.
  const ImVec2 viewport=ImGui::GetIO().DisplaySize;
@@ -869,7 +885,7 @@ void Draw(OverlayHost::Runtime* runtime){
  ImGui::SetNextWindowPos(P(0,0),ImGuiCond_Always);ImGui::SetNextWindowSize(ImVec2(1040*scale,680*scale),ImGuiCond_Always);
  ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,ImVec2(0,0));ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize,0.f);
  ImGui::Begin("##TS3Cheats",nullptr,ImGuiWindowFlags_NoTitleBar|ImGuiWindowFlags_NoResize|ImGuiWindowFlags_NoMove|ImGuiWindowFlags_NoSavedSettings|ImGuiWindowFlags_NoBackground|ImGuiWindowFlags_NoScrollbar|ImGuiWindowFlags_NoScrollWithMouse|ImGuiWindowFlags_NoNav);
- if(NativeUI::BackPressed()){if(languageOpen)languageOpen=false;else if(settingsOpen)SetSettings(false);else {OverlayHost::Close();return;}}
+ if(NativeUI::BackPressed()){if(languageOpen)languageOpen=false;else if(settingsOpen)SetSettings(false);else {OverlayHost::Close("Back pressed");return;}}
  NativeUI::NavScope(languageOpen?2:settingsOpen?1:0);
  draw=ImGui::GetWindowDrawList();Hit("title-drag",0,0,960,68);
  if(ImGui::IsItemHovered()||titleDragging)ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeAll);

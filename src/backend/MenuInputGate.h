@@ -34,11 +34,41 @@ static bool ViewerActive(){
 }
 static bool releaseButton[256];
 static bool MenuKey(int key){return key==VK_LBUTTON||key==VK_RBUTTON||key==VK_MBUTTON||key==VK_XBUTTON1||key==VK_XBUTTON2||key==VK_TAB||key==VK_F10||key==VK_RETURN||key==VK_ESCAPE;}
+static bool flightOwnsFaceButtons;   // flight is on: it reads movement itself (keyboard and pad)
+// Seen live (2026-11-26): while flying, the game's walking code still got the movement and jump keys and
+// played its own clips over the flight pose: TURN180 when you reverse (the character turns to face the
+// camera), JUMPAIR for Space and LANDRUN/STOPSMALL when that "jump" lands. Flight reads these keys with
+// GetAsyncKeyState, so the game's DirectInput copy can drop them while flight is on.
+static bool FlightKey(int key){
+ if(!flightOwnsFaceButtons)return false;
+ switch(key){
+ case 'W':case 'A':case 'S':case 'D':case 'E':case 'Q':case VK_SPACE:case VK_UP:case VK_DOWN:case VK_LEFT:case VK_RIGHT:
+ case VK_CONTROL:case VK_LCONTROL:case VK_RCONTROL:case VK_SHIFT:case VK_LSHIFT:case VK_RSHIFT:return true;
+ }
+ return false;
+}
 static bool Suppressed(int key){
  if(key<1||key>255||!releaseButton[key])return false;
  if(!(GetAsyncKeyState(key)&0x8000))releaseButton[key]=false;
  return releaseButton[key];
 }
+// Ctrl+Backspace opens the Trace Console, but the game uses Backspace on its own (it equips the ball). So
+// Backspace pressed with Ctrl held is kept from the game until it is released; Backspace alone still works.
+static void HoldCtrlBackspace(){
+ if((GetAsyncKeyState(VK_BACK)&0x8000)&&(GetAsyncKeyState(VK_CONTROL)&0x8000))releaseButton[VK_BACK]=true;
+}
+// The Trace Console (a window of TS3ModMenu.dll, class TS3ModMenuTraceConsole) is open. During gameplay the game
+// then gets no mouse, so the camera stays still and the cursor can reach the console; keyboard and controller
+// still reach the game. On the title screen, loading screens and the game's own menus (pause, shop, quest) the
+// game keeps the mouse. The bridge stamps gameplayTick on each gameplay frame while the console is open.
+static volatile LONG gameplayTick;static HWND consoleWindow;
+static bool ConsoleOpen(){
+ static DWORD checked;static bool open;DWORD now=GetTickCount();
+ if(DWORD(now-checked)>=100){checked=now;HWND w=FindWindowW(L"TS3ModMenuTraceConsole",0);DWORD pid=0;
+  if(w)GetWindowThreadProcessId(w,&pid);open=w&&pid==GetCurrentProcessId()&&IsWindowVisible(w);consoleWindow=open?w:0;}
+ return open;
+}
+static bool ConsoleHoldsMouse(){LONG t=gameplayTick;return t&&ConsoleOpen()&&DWORD(GetTickCount()-(DWORD)t)<250;}
 static bool Blocked(){
  bool open=ExternalOpen()||Open();
  if(open){InterlockedExchange(&wasOpen,1);return true;}
@@ -88,11 +118,14 @@ static void Neutral(void* self,DWORD count,void* data){
 static HRESULT WINAPI DeviceState(void* self,DWORD count,void* data){
  StateFn fn=(StateFn)Original(self,devices,16,0);if(!fn)return E_FAIL;
  HRESULT result=fn(self,count,data);
+ HoldCtrlBackspace();
+ // The device state can show Backspace a moment before GetAsyncKeyState does: check its own Ctrl keys too.
+ if(SUCCEEDED(result)&&data&&count==256){const BYTE* k=(const BYTE*)data;if((k[0x0e]&0x80)&&((k[0x1d]|k[0x9d])&0x80))releaseButton[VK_BACK]=true;}
  if(SUCCEEDED(result)&&data){Format(self,count);if(count==256)InterlockedOr(&deviceFormats,1);else if(count==16||count==20)InterlockedOr(&deviceFormats,2);}
  bool blocked=Blocked();
  if(SUCCEEDED(result)&&data&&count<=4096){
-  if(blocked)Neutral(self,count,data);
-  else if(count==256){for(unsigned scan=0;scan<256;++scan){unsigned code=(scan&0x7f)|((scan&0x80)?0xe000:0);if(Suppressed(MapVirtualKeyA(code,MAPVK_VSC_TO_VK_EX)))((BYTE*)data)[scan]=0;}}
+  if(blocked||((count==16||count==20)&&ConsoleHoldsMouse()))Neutral(self,count,data);
+  else if(count==256){for(unsigned scan=0;scan<256;++scan){unsigned code=(scan&0x7f)|((scan&0x80)?0xe000:0);{int vk=MapVirtualKeyA(code,MAPVK_VSC_TO_VK_EX);if(Suppressed(vk)||FlightKey(vk))((BYTE*)data)[scan]=0;}}}
   else if(count==16||count==20){const int keys[]={VK_LBUTTON,VK_RBUTTON,VK_MBUTTON,VK_XBUTTON1,VK_XBUTTON2};for(unsigned i=0;i<count-12&&i<5;++i)if(Suppressed(keys[i]))((BYTE*)data)[12+i]=0;}
  }
  return result;
@@ -100,16 +133,19 @@ static HRESULT WINAPI DeviceState(void* self,DWORD count,void* data){
 static HRESULT WINAPI DeviceData(void* self,DWORD objectSize,void* data,DWORD* count,DWORD flags){
  DataFn fn=(DataFn)Original(self,devices,16,1);if(!fn)return E_FAIL;
  HRESULT result=fn(self,objectSize,data,count,flags);
- if(Blocked()&&count){
+ HoldCtrlBackspace();
+ const DWORD format=Format(self);
+ if((Blocked()||((format==16||format==20)&&ConsoleHoldsMouse()))&&count){
   // The original read drains the device buffer; PEEK callers are explicitly
   // drained too, so queued menu input cannot reappear after closing the panel.
   if(flags&1){DWORD discard=0xffffffff;fn(self,objectSize,0,&discard,0);}
   *count=0;
  }
  else if(SUCCEEDED(result)&&data&&count&&objectSize>=16&&*count<4096){
-  DWORD kept=0,bytes=Format(self);BYTE* events=(BYTE*)data;
+  DWORD kept=0,bytes=format;BYTE* events=(BYTE*)data;
   for(DWORD i=0;i<*count;++i){BYTE* event=events+i*objectSize;
-   if((*(DWORD*)(event+4)&0x80)&&Suppressed(EventKey(bytes,*(DWORD*)event)))continue;
+   if(bytes==256&&*(DWORD*)event==0x0e&&(*(DWORD*)(event+4)&0x80)&&(GetAsyncKeyState(VK_CONTROL)&0x8000)){releaseButton[VK_BACK]=true;continue;}
+   if((*(DWORD*)(event+4)&0x80)&&(Suppressed(EventKey(bytes,*(DWORD*)event))||(bytes==256&&FlightKey(EventKey(bytes,*(DWORD*)event)))))continue;
    if(kept!=i)for(DWORD b=0;b<objectSize;++b)events[kept*objectSize+b]=event[b];++kept;
   }*count=kept;
  }
@@ -126,7 +162,7 @@ static void AttachDevice(void* self){
  for(int i=0;i<16;++i)if(!devices[i].table){
   VTableHook& e=devices[i];e.original[0]=table[9];e.original[1]=table[10];e.table=table;MemoryBarrier();
   bool a=Patch(table+9,(void*)DeviceState,e.original[0]);bool b=Patch(table+10,(void*)DeviceData,e.original[1]);
-  if(a&&b)deviceReady=true;else Log("Unlocks input: DirectInput hook incomplete");return;
+  if(a&&b)deviceReady=true;else Log("[Input] Could not hook a game keyboard or mouse: the game may react to input while the menu is open");return;
  }
 }
 static HRESULT WINAPI CreateDevice(void* self,const GUID& guid,void** out,void* outer){
@@ -142,7 +178,6 @@ struct Pad {DWORD packet;WORD buttons;BYTE leftTrigger,rightTrigger;SHORT lx,ly,
 static_assert(sizeof(Pad)==16,"XInput ABI");
 typedef DWORD(WINAPI* PadFn)(DWORD,Pad*);static PadFn padOriginal;
 static bool padWasOpen[4],padRelease[4];
-static bool flightOwnsFaceButtons;
 static WORD padButtons[4];static bool padLeft[4],padRight[4];
 static bool PadNeutral(const Pad& p){return !p.buttons&&p.leftTrigger<30&&p.rightTrigger<30&&p.lx>-7849&&p.lx<7849&&p.ly>-7849&&p.ly<7849&&p.rx>-8689&&p.rx<8689&&p.ry>-8689&&p.ry<8689;}
 static DWORD WINAPI PadState(DWORD index,Pad* state){
@@ -164,9 +199,9 @@ typedef BOOL(WINAPI* CursorFn)(int,int);static CursorFn cursorOriginal;
 typedef BOOL(WINAPI* ClipFn)(const RECT*);static ClipFn clipOriginal;
 typedef SHORT(WINAPI* KeyFn)(int);static KeyFn keyOriginal;
 typedef LRESULT(WINAPI* DispatchFn)(const MSG*);static DispatchFn dispatchOriginal;
-static BOOL WINAPI Cursor(int x,int y){return Blocked()?TRUE:cursorOriginal(x,y);}
-static BOOL WINAPI Clip(const RECT* r){return Blocked()?clipOriginal(0):clipOriginal(r);}
-static SHORT WINAPI Key(int key){return Blocked()||Suppressed(key)?0:keyOriginal(key);}
+static BOOL WINAPI Cursor(int x,int y){return Blocked()||ConsoleHoldsMouse()?TRUE:cursorOriginal(x,y);}
+static BOOL WINAPI Clip(const RECT* r){return Blocked()||ConsoleHoldsMouse()?clipOriginal(0):clipOriginal(r);}
+static SHORT WINAPI Key(int key){if(key==VK_BACK)HoldCtrlBackspace();return Blocked()||Suppressed(key)?0:keyOriginal(key);}
 static bool InputMessage(UINT m){return (m>=WM_KEYFIRST&&m<=WM_KEYLAST)||(m>=WM_MOUSEFIRST&&m<=WM_MOUSELAST)||m==WM_INPUT;}
 static LRESULT WINAPI Dispatch(const MSG* msg){
  // While the menu is open its window handler receives these messages and keeps them from gameplay.
@@ -175,6 +210,15 @@ static LRESULT WINAPI Dispatch(const MSG* msg){
  if(msg&&Blocked()&&InputMessage(msg->message)){
   // Foreground raw input packets still need the documented default cleanup.
   return msg->message==WM_INPUT?DefWindowProcA(msg->hwnd,msg->message,msg->wParam,msg->lParam):0;
+ }
+ // Console open in gameplay: the game's mouse messages and raw mouse input are dropped (the console has its own
+ // message loop, so its clicks never come through here). Raw keyboard input still reaches the game.
+ if(msg&&((msg->message>=WM_MOUSEFIRST&&msg->message<=WM_MOUSELAST)||msg->message==WM_INPUT)&&ConsoleHoldsMouse()&&
+    GetAncestor(msg->hwnd,GA_ROOT)!=consoleWindow){
+  if(msg->message!=WM_INPUT)return 0;
+  RAWINPUTHEADER header;UINT size=sizeof(header);
+  if(GetRawInputData((HRAWINPUT)msg->lParam,RID_HEADER,&header,&size,sizeof(RAWINPUTHEADER))==sizeof(header)&&header.dwType==RIM_TYPEMOUSE)
+   return DefWindowProcA(msg->hwnd,msg->message,msg->wParam,msg->lParam);
  }
  return dispatchOriginal(msg);
 }
@@ -201,7 +245,7 @@ static void InstallImports(){
    if(replacement&&Patch(addresses+i,replacement,*original))++installed;
   }
  }
- hooksReady=installed==5;Log(hooksReady?"Unlocks input gate ready: keyboard, mouse, controller, cursor and window input":"Unlocks input gate: one or more import hooks unavailable");
+ hooksReady=installed==5;   // reported in the startup summary
 }
 static void AttachPendingDevices(){
  for(int i=0;i<16;++i)if(pendingDevices[i]){

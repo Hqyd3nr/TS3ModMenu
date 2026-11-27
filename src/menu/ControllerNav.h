@@ -11,6 +11,7 @@ static unsigned savedFocus[3];
 static bool navSeen,mouseKnown;static ImVec2 physicalMouse;
 static float Abs(float x){return x<0?-x:x;}
 static float NavMax(float a,float b){return a>b?a:b;}
+bool ControllerConnected(){return padConnected;}
 bool PollController(bool foreground,bool menuOpen,WORD openButton){
  if(!padLoaded){padLoaded=true;HMODULE m=LoadLibraryW(L"xinput1_4.dll");if(!m)m=LoadLibraryW(L"xinput9_1_0.dll");if(m)readPad=(ReadPad)GetProcAddress(m,"XInputGetState");}
  DWORD now=GetTickCount();PadState p={};bool connected=false;DWORD slot=padSlot;

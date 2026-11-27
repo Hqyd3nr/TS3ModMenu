@@ -137,7 +137,7 @@ static void Finish(bool success,const char* text){
   ownsFlight=false;text="Teleport stopped. Flight stays on until you turn it off.";
  }
  if(ownsFlight){
-  if(!wasFlying||!success)Stop(success?"Teleport complete":"Teleport cancelled");
+  if(!wasFlying||!success){travelHold=true;Stop(success?"[Teleport] Area loaded; player released":"[Teleport] Cancelled; player released",success?Diagnostics::Debug:Diagnostics::Warning);travelHold=false;}
  }
  phase=Idle;ownsFlight=false;moved=false;SetTravelInput(false);
  Message(success?TS3CheatOk:TS3CheatFault,text);
@@ -170,7 +170,7 @@ static void Request(const Context& c){
 }
 // Streaming needs a physics hold, not the user-facing flying animation.
 static void BeginHold(){
- wasFlying=enabled;if(!enabled)Start(travelActor,false);
+ wasFlying=enabled;if(!enabled){travelHold=true;Start(travelActor,false);travelHold=false;}
  ownsFlight=enabled&&Same(travelActor);
 }
 static void Step(){
