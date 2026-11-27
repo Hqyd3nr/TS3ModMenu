@@ -89,9 +89,9 @@ The menu targets Toy Story 3 **Complete Edition** only. Game addresses from the 
 
 ## Credits
 
-- Disney/Pixar and Avalanche Software: characters and game artwork.
-- Toy Story 3 Companion: interface and typography inspiration.
-- Lilita One by Juan Montoreano and Nunito by The Nunito Project Authors: fonts.
+- Disney/Pixar and Avalanche Software — characters and game artwork.
+- Toy Story 3 Companion — interface and typography inspiration.
+- Lilita One by Juan Montoreano and Nunito by The Nunito Project Authors — fonts.
 
 ## License
 
