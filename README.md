@@ -56,6 +56,8 @@ Remove the supplied DLLs and restore any files you replaced. Keep your `Mod Menu
 
 Found a bug? Open an [issue](../../issues) and include the version shown at the bottom of Settings, whether you play with keyboard or controller, and what happened.
 
+Please attach `Mod Menu\Logs\Latest.log` from your game folder. Send it before you restart the game, because it's replaced each launch. If the game crashed, also attach the newest `.txt` file from `Mod Menu\CrashDumps`. These files stay on your PC; nothing is uploaded.
+
 ## Repository layout
 
 | Folder | Contents |
@@ -79,6 +81,11 @@ Requirements: MSVC 14.34 x64 (Visual Studio 2022 17.4), Windows SDK 10.0.22621 a
 The scripts in `tools` were written for the author's own workspace: `<workspace>` and `<msvc-toolchain>` mark the paths to set for your machine. Release builds also encode internal strings and use extra hardening flags, so a local build will not be byte-identical to a release.
 
 The menu targets Toy Story 3 **Complete Edition** only. Game addresses from the original Steam Toy Story 3 release are different.
+
+## Team
+
+- **Hqyd3nr**: creator, feature direction, interface design and menu artwork.
+- [RichiePlayz2593](https://github.com/RichiePLayz89): community support and beta testing.
 
 ## Credits
 
