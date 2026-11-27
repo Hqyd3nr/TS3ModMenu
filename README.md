@@ -84,8 +84,8 @@ The menu targets Toy Story 3 **Complete Edition** only. Game addresses from the 
 
 ## Team
 
-- **Hqyd3nr**: creator, feature direction, interface design and menu artwork.
-- [RichiePlayz2593](https://github.com/RichiePLayz89): community support and beta testing.
+- [Hqyd3nr](https://github.com/Hqyd3nr): creator, feature direction, interface design and menu artwork.
+- [RichiePlayz2593](https://github.com/RichiePlayz2593): community support and beta testing.
 
 ## Credits
 
